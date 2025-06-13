@@ -7,13 +7,13 @@
       "quantity": 0.09519639,
       "order_type": "market",
       "entry_price": 105046.0,
-      "current_price": 105854.19,
+      "current_price": 105801.51,
       "status": "Open",
       "limit_price": null,
       "entry_time": "2025-06-13 13:05:42",
-      "profit_loss": 56.86,
-      "fees": 20.08,
-      "roi": 0.57
+      "profit_loss": 51.85,
+      "fees": 20.07,
+      "roi": 0.52
     },
     {
       "id": "1a03e982-8205-4a0b-a82b-43ef2c123c2b",
@@ -22,13 +22,13 @@
       "quantity": 3.91666895,
       "order_type": "market",
       "entry_price": 2553.19,
-      "current_price": 2568.01,
+      "current_price": 2566.01,
       "status": "Open",
       "limit_price": null,
       "entry_time": "2025-06-13 13:05:48",
-      "profit_loss": 37.99,
-      "fees": 20.06,
-      "roi": 0.38
+      "profit_loss": 30.16,
+      "fees": 20.05,
+      "roi": 0.3
     },
     {
       "id": "b97b92f0-2b2c-4999-98ba-65023cd39616",
@@ -37,13 +37,13 @@
       "quantity": 15.28187417,
       "order_type": "market",
       "entry_price": 654.37,
-      "current_price": 654.06,
+      "current_price": 653.67,
       "status": "Open",
       "limit_price": null,
       "entry_time": "2025-06-13 13:05:52",
-      "profit_loss": -24.73,
-      "fees": 20.0,
-      "roi": -0.25
+      "profit_loss": -30.69,
+      "fees": 19.99,
+      "roi": -0.31
     },
     {
       "id": "57c62764-a41d-4b3a-8fe5-f4167c486385",
@@ -52,13 +52,13 @@
       "quantity": 4635.63879103,
       "order_type": "market",
       "entry_price": 2.1572,
-      "current_price": 2.1519,
+      "current_price": 2.1521,
       "status": "Open",
       "limit_price": null,
       "entry_time": "2025-06-13 13:05:56",
-      "profit_loss": -44.54,
+      "profit_loss": -43.62,
       "fees": 19.98,
-      "roi": -0.45
+      "roi": -0.44
     },
     {
       "id": "43b84b92-3975-4f4b-bf4f-25115b48633b",
@@ -67,13 +67,13 @@
       "quantity": 56840.78895015,
       "order_type": "market",
       "entry_price": 0.17593,
-      "current_price": 0.17904,
+      "current_price": 0.17894,
       "status": "Open",
       "limit_price": null,
       "entry_time": "2025-06-13 13:05:59",
-      "profit_loss": 156.6,
-      "fees": 20.18,
-      "roi": 1.57
+      "profit_loss": 150.92,
+      "fees": 20.17,
+      "roi": 1.51
     },
     {
       "id": "54b631fc-612a-4cd1-9379-fd4b027336b1",
@@ -97,13 +97,13 @@
       "quantity": 747.94315632,
       "order_type": "market",
       "entry_price": 13.37,
-      "current_price": 13.49,
+      "current_price": 13.48,
       "status": "Open",
       "limit_price": null,
       "entry_time": "2025-06-13 13:06:07",
-      "profit_loss": 69.66,
-      "fees": 20.09,
-      "roi": 0.7
+      "profit_loss": 62.19,
+      "fees": 20.08,
+      "roi": 0.62
     }
   ],
   "trade_history": [
