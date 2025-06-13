@@ -1,3 +1,63 @@
+// Account Balance Functions
+async function fetchAccountBalance() {
+    try {
+        console.log('Fetching account balance...');
+        const response = await fetch('/account-balance');
+        const data = await response.json();
+        console.log('Balance data received:', data);
+        
+        if (data.status === 'success') {
+            updateAccountBalance(data.balances);
+        } else {
+            console.error('Error in balance response:', data);
+            document.getElementById('account-balance').textContent = 'Error';
+        }
+    } catch (error) {
+        console.error('Error fetching account balance:', error);
+        document.getElementById('account-balance').textContent = 'Error';
+    }
+}
+
+function updateAccountBalance(balances) {
+    console.log('Updating balance display with:', balances);
+    const balanceElement = document.getElementById('account-balance');
+    
+    if (!balanceElement) {
+        console.error('Balance element not found in DOM');
+        return;
+    }
+    
+    if (!balances || balances.length === 0) {
+        console.log('No balances found, setting to 0.00');
+        balanceElement.textContent = '0.00';
+        return;
+    }
+    
+    // Find USDT balance
+    const usdtBalance = balances.find(balance => balance.asset === 'USDT');
+    console.log('USDT balance found:', usdtBalance);
+    
+    if (!usdtBalance) {
+        console.log('No USDT balance found, setting to 0.00');
+        balanceElement.textContent = '0.00';
+        return;
+    }
+    
+    // Format USDT balance with 2 decimal places
+    const total = parseFloat(usdtBalance.total);
+    console.log('Setting balance to:', total.toFixed(2));
+    balanceElement.textContent = total.toFixed(2);
+}
+
+// Update balance every 30 seconds
+setInterval(fetchAccountBalance, 30000);
+
+// Fetch balance immediately when page loads
+document.addEventListener('DOMContentLoaded', () => {
+    console.log('Page loaded, fetching initial balance...');
+    fetchAccountBalance();
+});
+
 // Global variables
 let ws = null;
 let isConnected = false;

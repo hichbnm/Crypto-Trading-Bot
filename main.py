@@ -530,5 +530,39 @@ async def get_active_trades():
     """Get all active trades."""
     return active_trades
 
+@app.get("/account-balance")
+async def get_account_balance():
+    """Get account balance from Binance."""
+    try:
+        # Get account information from Binance
+        account_info = binance_client.get_account()
+        
+        # Get all balances, including zero balances
+        balances = [
+            {
+                "asset": balance["asset"],
+                "free": float(balance["free"]),
+                "locked": float(balance["locked"]),
+                "total": float(balance["free"]) + float(balance["locked"])
+            }
+            for balance in account_info["balances"]
+        ]
+        
+        # Sort balances by total amount (highest first)
+        balances.sort(key=lambda x: x["total"], reverse=True)
+        
+        return {
+            "status": "success", 
+            "balances": balances,
+            "message": "Showing all balances, including zero balances"
+        }
+        
+    except BinanceAPIException as e:
+        logger.error(f"Binance API error while fetching account balance: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error fetching account balance: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

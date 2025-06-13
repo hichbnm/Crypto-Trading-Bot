@@ -279,28 +279,26 @@
         }
 
         .stat-box {
-            background-color: rgba(255, 255, 255, 0.1);
+            background: rgba(255, 255, 255, 0.1);
             padding: 0.5rem 1rem;
             border-radius: 5px;
             display: flex;
             align-items: center;
             gap: 0.5rem;
+            cursor: pointer;
             transition: all 0.3s ease;
         }
 
         .stat-box:hover {
-            background-color: rgba(255, 255, 255, 0.2);
-            transform: translateY(-2px);
+            background: rgba(255, 255, 255, 0.2);
         }
 
         .stat-label {
-            font-size: 0.9rem;
-            opacity: 0.8;
+            color: rgba(255, 255, 255, 0.8);
         }
 
         .stat-value {
             font-weight: 600;
-            font-size: 1.1rem;
         }
 
         .total-pl {
@@ -453,162 +451,169 @@
                 flex-direction: column;
                 gap: 1rem;
             }
-        }
-    </style>
-</head>
-<body>
-    <div class="header-container">
-        <h1 class="header-title">Crypto Trading Bot</h1>
-        <div class="header-stats">
-            <div class="stat-box">
-                <span class="stat-label">Active Trades:</span>
-                <span class="stat-value" id="active-trades-count">0</span>
-            </div>
-            <div class="stat-box">
-                <span class="stat-label">Total P/L:</span>
-                <span class="stat-value total-pl" id="total-pl">$0.00</span>
-                <div class="pl-breakdown">
-                    <span id="active-pl">Active: $0.00</span> | 
-                    <span id="history-pl">History: $0.00</span>
+        </style>
+    </head>
+    <body>
+        <header>
+            <div class="header-container">
+                <h1 class="header-title">Crypto Trading Bot</h1>
+                <div class="header-stats">
+                    <div class="stat-box">
+                        <span class="stat-label">Active Trades:</span>
+                        <span class="stat-value" id="active-trades-count">0</span>
+                    </div>
+                    <div class="stat-box">
+                        <span class="stat-label">Total P/L:</span>
+                        <span class="stat-value total-pl" id="total-pl">$0.00</span>
+                        <div class="pl-breakdown">
+                            <span id="active-pl">Active: $0.00</span> | 
+                            <span id="history-pl">History: $0.00</span>
+                        </div>
+                    </div>
+                    <div class="stat-box" id="balance-box">
+                        <span class="stat-label">USDT Balance:</span>
+                        <span class="stat-value" id="account-balance">
+                            <span class="balance-loading"></span>
+                        </span>
+                    </div>
+                    <div class="connection-status disconnected" id="connection-status">
+                        <span class="status-indicator"></span>
+                        <span class="status-text">Disconnected</span>
+                    </div>
                 </div>
             </div>
-            <div class="connection-status disconnected" id="connection-status">
-                <span class="status-indicator"></span>
-                <span class="status-text">Disconnected</span>
-            </div>
-        </div>
-    </div>
-    
-    <main>
-        <div class="container">
-            <div class="trading-form">
-                <h2>Place Your Trade</h2>
-                <form id="tradeForm">
-                    <div class="form-group">
-                        <label for="coin">Select Cryptocurrency</label>
-                        <select id="coin" name="coin" required>
-                            <option value="">Choose a coin</option>
-                            <option value="bitcoin">Bitcoin (BTC)</option>
-                            <option value="ethereum">Ethereum (ETH)</option>
-                            <option value="binancecoin">Binance Coin (BNB)</option>
-                            <option value="ripple">Ripple (XRP)</option>
-                            <option value="dogecoin">Dogecoin (DOGE)</option>
-                            <option value="polygon">Polygon (MATIC)</option>
-                            <option value="chainlink">Chainlink (LINK)</option>
-                        </select>
-                    </div>
+        </header>
+        
+        <main>
+            <div class="container">
+                <div class="trading-form">
+                    <h2>Place Your Trade</h2>
+                    <form id="tradeForm">
+                        <div class="form-group">
+                            <label for="coin">Select Cryptocurrency</label>
+                            <select id="coin" name="coin" required>
+                                <option value="">Choose a coin</option>
+                                <option value="bitcoin">Bitcoin (BTC)</option>
+                                <option value="ethereum">Ethereum (ETH)</option>
+                                <option value="binancecoin">Binance Coin (BNB)</option>
+                                <option value="ripple">Ripple (XRP)</option>
+                                <option value="dogecoin">Dogecoin (DOGE)</option>
+                                <option value="polygon">Polygon (MATIC)</option>
+                                <option value="chainlink">Chainlink (LINK)</option>
+                            </select>
+                        </div>
 
-                    <div class="form-group">
-                        <label for="amount_usdt">Amount (USDT)</label>
-                        <input type="number" id="amount_usdt" name="amount_usdt" 
-                               placeholder="Enter amount in USDT" required>
-                    </div>
+                        <div class="form-group">
+                            <label for="amount_usdt">Amount (USDT)</label>
+                            <input type="number" id="amount_usdt" name="amount_usdt" 
+                                   placeholder="Enter amount in USDT" required>
+                        </div>
 
-                    <div class="form-group">
-                        <label for="order_type">Order Type</label>
-                        <select id="order_type" name="order_type" required>
-                            <option value="market">Market Order</option>
-                            <option value="limit">Limit Order</option>
-                        </select>
-                    </div>
+                        <div class="form-group">
+                            <label for="order_type">Order Type</label>
+                            <select id="order_type" name="order_type" required>
+                                <option value="market">Market Order</option>
+                                <option value="limit">Limit Order</option>
+                            </select>
+                        </div>
 
-                    <div class="form-group" id="limit_price_container" style="display: none;">
-                        <label for="limit_price">Limit Price (USDT)</label>
-                        <input type="number" id="limit_price" name="limit_price" 
-                               step="0.000001" min="0.000001" 
-                               placeholder="Enter limit price">
-                    </div>
+                        <div class="form-group" id="limit_price_container" style="display: none;">
+                            <label for="limit_price">Limit Price (USDT)</label>
+                            <input type="number" id="limit_price" name="limit_price" 
+                                   step="0.000001" min="0.000001" 
+                                   placeholder="Enter limit price">
+                        </div>
 
-                    <button type="submit">Place Order</button>
-                </form>
-            </div>
+                        <button type="submit">Place Order</button>
+                    </form>
+                </div>
 
-            <div class="trade-report">
-                <h2>Active Trades</h2>
-                <table id="tradesTable">
-                    <thead>
-                        <tr>
-                            <th>Coin</th>
-                            <th>Amount (USDT)</th>
-                            <th>Entry Price</th>
-                            <th>Current Price</th>
-                            <th>P/L</th>
-                            <th>Fees</th>
-                            <th>ROI</th>
-                            <th>Status</th>
-                            <th>Action</th>
-                        </tr>
-                    </thead>
-                    <tbody id="tradesTableBody">
-                        {% if active_trades %}
-                            {% for trade in active_trades %}
-                            <tr data-trade-id="{{ trade.id }}">
-                                <td>{{ trade.coin }}</td>
-                                <td>{{ trade.amount_usdt }}</td>
-                                <td>{{ trade.entry_price }}</td>
-                                <td>{{ trade.current_price }}</td>
-                                <td class="profit-loss {{ 'positive' if trade.profit_loss >= 0 else 'negative' }}">{{ trade.profit_loss }}</td>
-                                <td>{{ trade.fees }}</td>
-                                <td>{{ "%.2f"|format(trade.roi) if trade.roi is not none else "N/A" }}%</td>
-                                <td class="{{ 'status-open' if trade.status == 'Open' else 'status-pending' }}">{{ trade.status }}</td>
-                                <td>
-                                    {% if trade.status == 'Open' %}
-                                    <button onclick="closeTrade('{{ trade.id }}')" class="close-btn">Close</button>
-                                    {% else %}
-                                    <button onclick="declineTrade('{{ trade.id }}')" class="decline-btn">Decline</button>
-                                    {% endif %}
-                                </td>
-                            </tr>
-                            {% endfor %}
-                        {% else %}
-                        <tr>
-                            <td colspan="9" style="text-align: center; padding: 20px; color: #777;">No active trades to display.</td>
-                        </tr>
-                        {% endif %}
-                    </tbody>
-                </table>
-
-                <h2>Trade History</h2>
-                <table id="historyTable">
-                    <thead>
-                        <tr>
-                            <th>Coin</th>
-                            <th>Amount (USDT)</th>
-                            <th>Entry Price</th>
-                            <th>Exit Price</th>
-                            <th>P/L</th>
-                            <th>Fees</th>
-                            <th>Status</th>
-                            <th>Time</th>
-                        </tr>
-                    </thead>
-                    <tbody id="historyTableBody">
-                        {% if trade_history %}
-                            {% for trade in trade_history %}
+                <div class="trade-report">
+                    <h2>Active Trades</h2>
+                    <table id="tradesTable">
+                        <thead>
                             <tr>
-                                <td>{{ trade.coin }}</td>
-                                <td>{{ "%.2f"|format(trade.amount_usdt) }}</td>
-                                <td>{{ "%.2f"|format(trade.entry_price) }}</td>
-                                <td>{{ "%.2f"|format(trade.exit_price) if trade.exit_price else "N/A" }}</td>
-                                <td class="profit-loss {{ 'positive' if trade.profit_loss >= 0 else 'negative' }}">
-                                    {{ "%.2f"|format(trade.profit_loss) }}
-                                </td>
-                                <td>{{ "%.2f"|format(trade.fees) }}</td>
-                                <td>{{ trade.status }}</td>
-                                <td>{{ trade.entry_time }}</td>
+                                <th>Coin</th>
+                                <th>Amount (USDT)</th>
+                                <th>Entry Price</th>
+                                <th>Current Price</th>
+                                <th>P/L</th>
+                                <th>Fees</th>
+                                <th>ROI</th>
+                                <th>Status</th>
+                                <th>Action</th>
                             </tr>
-                            {% endfor %}
-                        {% else %}
-                        <tr>
-                            <td colspan="8" style="text-align: center; padding: 20px; color: #777;">No trade history to display.</td>
-                        </tr>
-                        {% endif %}
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    </main>
+                        </thead>
+                        <tbody id="tradesTableBody">
+                            {% if active_trades %}
+                                {% for trade in active_trades %}
+                                <tr data-trade-id="{{ trade.id }}">
+                                    <td>{{ trade.coin }}</td>
+                                    <td>{{ trade.amount_usdt }}</td>
+                                    <td>{{ trade.entry_price }}</td>
+                                    <td>{{ trade.current_price }}</td>
+                                    <td class="profit-loss {{ 'positive' if trade.profit_loss >= 0 else 'negative' }}">{{ trade.profit_loss }}</td>
+                                    <td>{{ trade.fees }}</td>
+                                    <td>{{ "%.2f"|format(trade.roi) if trade.roi is not none else "N/A" }}%</td>
+                                    <td class="{{ 'status-open' if trade.status == 'Open' else 'status-pending' }}">{{ trade.status }}</td>
+                                    <td>
+                                        {% if trade.status == 'Open' %}
+                                        <button onclick="closeTrade('{{ trade.id }}')" class="close-btn">Close</button>
+                                        {% else %}
+                                        <button onclick="declineTrade('{{ trade.id }}')" class="decline-btn">Decline</button>
+                                        {% endif %}
+                                    </td>
+                                </tr>
+                                {% endfor %}
+                            {% else %}
+                            <tr>
+                                <td colspan="9" style="text-align: center; padding: 20px; color: #777;">No active trades to display.</td>
+                            </tr>
+                            {% endif %}
+                        </tbody>
+                    </table>
 
-    <script src="{{ url_for('static', path='/js/main.js') }}"></script>
-</body>
+                    <h2>Trade History</h2>
+                    <table id="historyTable">
+                        <thead>
+                            <tr>
+                                <th>Coin</th>
+                                <th>Amount (USDT)</th>
+                                <th>Entry Price</th>
+                                <th>Exit Price</th>
+                                <th>P/L</th>
+                                <th>Fees</th>
+                                <th>Status</th>
+                                <th>Time</th>
+                            </tr>
+                        </thead>
+                        <tbody id="historyTableBody">
+                            {% if trade_history %}
+                                {% for trade in trade_history %}
+                                <tr>
+                                    <td>{{ trade.coin }}</td>
+                                    <td>{{ "%.2f"|format(trade.amount_usdt) }}</td>
+                                    <td>{{ "%.2f"|format(trade.entry_price) }}</td>
+                                    <td>{{ "%.2f"|format(trade.exit_price) if trade.exit_price else "N/A" }}</td>
+                                    <td class="profit-loss {{ 'positive' if trade.profit_loss >= 0 else 'negative' }}">
+                                        {{ "%.2f"|format(trade.profit_loss) }}
+                                    </td>
+                                    <td>{{ "%.2f"|format(trade.fees) }}</td>
+                                    <td>{{ trade.status }}</td>
+                                    <td>{{ trade.entry_time }}</td>
+                                </tr>
+                                {% endfor %}
+                            {% else %}
+                            <tr>
+                                <td colspan="8" style="text-align: center; padding: 20px; color: #777;">No trade history to display.</td>
+                            </tr>
+                            {% endif %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </main>
+
+        <script src="{{ url_for('static', path='/js/main.js') }}"></script>
+    </body>
 </html>
