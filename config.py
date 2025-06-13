@@ -12,3 +12,6 @@ BINANCE_API_SECRET = os.getenv('BINANCE_API_SECRET', '')
 TRADING_FEE = 0.001  # 0.1% trading fee
 TAKE_PROFIT_PERCENTAGE = 10  # 10% take profit
 STOP_LOSS_PERCENTAGE = 5  # 5% stop loss 
+
+# Price Fetching Configuration
+PRICE_FETCH_DELAY = 0.5  # Delay between price fetches in seconds 

@@ -33,29 +33,30 @@
         }
 
         header {
-            background-color: var(--primary-color);
+            background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
             color: var(--white);
-            padding: 1.5rem;
+            padding: 0.8rem;
             text-align: center;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
             position: sticky;
             top: 0;
             z-index: 1000;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
         }
 
         main {
             max-width: 1400px;
-            margin: 2rem auto;
+            margin: 1.5rem auto;
             padding: 0 1rem;
         }
 
         .container {
             display: grid;
             grid-template-columns: 350px 1fr;
-            gap: 2rem;
+            gap: 1.5rem;
             background: var(--white);
-            border-radius: 10px;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
             overflow: hidden;
             animation: fadeIn 0.5s ease-out;
         }
@@ -67,7 +68,7 @@
 
         .trading-form {
             background: var(--light-bg);
-            padding: 2rem;
+            padding: 1.5rem;
             border-right: 1px solid var(--border-color);
             transition: all 0.3s ease;
         }
@@ -89,8 +90,15 @@
         }
 
         h1 {
-            font-size: 2rem;
-            text-shadow: 2px 2px 4px rgba(0,0,0,0.1);
+            font-size: 1.4rem;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            margin: 0;
+            background: linear-gradient(to right, #fff, #e0e0e0);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            text-shadow: none;
         }
 
         h2 {
@@ -116,38 +124,37 @@
         }
 
         .form-group {
-            margin-bottom: 1.5rem;
+            margin-bottom: 1rem;
             position: relative;
         }
 
-        label {
+        .form-group label {
             display: block;
-            margin-bottom: 0.5rem;
+            margin-bottom: 0.25rem;
             font-weight: 500;
             color: var(--primary-color);
-            transition: transform 0.3s ease;
+            font-size: 0.9rem;
         }
 
-        .form-group:focus-within label {
-            transform: translateY(-2px);
-            color: var(--info-color);
-        }
-
-        input, select {
+        .form-group input, .form-group select {
             width: 100%;
-            padding: 0.75rem;
+            padding: 0.5rem;
             border: 1px solid var(--border-color);
-            border-radius: 5px;
-            font-size: 1rem;
+            border-radius: 4px;
+            font-size: 0.9rem;
             transition: all 0.3s ease;
-            background: var(--white);
         }
 
-        input:focus, select:focus {
+        .form-group input:focus, .form-group select:focus {
             outline: none;
             border-color: var(--info-color);
-            box-shadow: 0 0 0 3px rgba(52, 152, 219, 0.1);
-            transform: translateY(-1px);
+            box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.1);
+        }
+
+        .form-group .hint {
+            font-size: 0.8rem;
+            color: #666;
+            margin-top: 0.25rem;
         }
 
         button {
@@ -451,169 +458,315 @@
                 flex-direction: column;
                 gap: 1rem;
             }
-        </style>
-    </head>
-    <body>
-        <header>
-            <div class="header-container">
-                <h1 class="header-title">Crypto Trading Bot</h1>
-                <div class="header-stats">
-                    <div class="stat-box">
-                        <span class="stat-label">Active Trades:</span>
-                        <span class="stat-value" id="active-trades-count">0</span>
+        }
+
+        .error-message {
+            background-color: #fee2e2;
+            border: 1px solid #ef4444;
+            color: #991b1b;
+            padding: 1rem;
+            border-radius: 6px;
+            margin: 1rem 0;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+            animation: slideIn 0.3s ease-out;
+        }
+
+        .error-message::before {
+            content: "⚠️";
+            font-size: 1.2rem;
+        }
+
+        @keyframes slideIn {
+            from { transform: translateY(-10px); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+
+        .balance-info {
+            background-color: #f0f9ff;
+            border: 1px solid #bae6fd;
+            color: #0369a1;
+            padding: 0.75rem;
+            border-radius: 6px;
+            margin: 0.5rem 0;
+            font-size: 0.9rem;
+        }
+
+        .balance-info strong {
+            color: #0c4a6e;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="header-container">
+            <h1 class="header-title">Crypto Trading Bot</h1>
+            <div class="header-stats">
+                <div class="stat-box">
+                    <span class="stat-label">Active Trades:</span>
+                    <span class="stat-value" id="active-trades-count">0</span>
+                </div>
+                <div class="stat-box">
+                    <span class="stat-label">Total P/L:</span>
+                    <span class="stat-value total-pl" id="total-pl">$0.00</span>
+                    <div class="pl-breakdown">
+                        <span id="active-pl">Active: $0.00</span> | 
+                        <span id="history-pl">History: $0.00</span>
                     </div>
-                    <div class="stat-box">
-                        <span class="stat-label">Total P/L:</span>
-                        <span class="stat-value total-pl" id="total-pl">$0.00</span>
-                        <div class="pl-breakdown">
-                            <span id="active-pl">Active: $0.00</span> | 
-                            <span id="history-pl">History: $0.00</span>
-                        </div>
-                    </div>
-                    <div class="stat-box" id="balance-box">
-                        <span class="stat-label">USDT Balance:</span>
-                        <span class="stat-value" id="account-balance">
-                            <span class="balance-loading"></span>
-                        </span>
-                    </div>
-                    <div class="connection-status disconnected" id="connection-status">
-                        <span class="status-indicator"></span>
-                        <span class="status-text">Disconnected</span>
-                    </div>
+                </div>
+                <div class="stat-box" id="balance-box">
+                    <span class="stat-label">USDT Balance:</span>
+                    <span class="stat-value" id="account-balance">
+                        <span class="balance-loading"></span>
+                    </span>
+                </div>
+                <div class="connection-status disconnected" id="connection-status">
+                    <span class="status-indicator"></span>
+                    <span class="status-text">Disconnected</span>
                 </div>
             </div>
-        </header>
-        
-        <main>
-            <div class="container">
-                <div class="trading-form">
-                    <h2>Place Your Trade</h2>
-                    <form id="tradeForm">
-                        <div class="form-group">
-                            <label for="coin">Select Cryptocurrency</label>
-                            <select id="coin" name="coin" required>
-                                <option value="">Choose a coin</option>
-                                <option value="bitcoin">Bitcoin (BTC)</option>
-                                <option value="ethereum">Ethereum (ETH)</option>
-                                <option value="binancecoin">Binance Coin (BNB)</option>
-                                <option value="ripple">Ripple (XRP)</option>
-                                <option value="dogecoin">Dogecoin (DOGE)</option>
-                                <option value="polygon">Polygon (MATIC)</option>
-                                <option value="chainlink">Chainlink (LINK)</option>
-                            </select>
-                        </div>
+        </div>
+    </header>
+    
+    <main>
+        <div class="container">
+            <div class="trading-form">
+                <h2>Place Your Trade</h2>
+                <form id="tradeForm">
+                    <div class="form-group">
+                        <label for="coin">Select Cryptocurrency</label>
+                        <select id="coin" name="coin" required>
+                            <option value="">Choose a coin</option>
+                            <option value="bitcoin">Bitcoin (BTC)</option>
+                            <option value="ethereum">Ethereum (ETH)</option>
+                            <option value="binancecoin">Binance Coin (BNB)</option>
+                            <option value="ripple">Ripple (XRP)</option>
+                            <option value="dogecoin">Dogecoin (DOGE)</option>
+                            <option value="polygon">Polygon (MATIC)</option>
+                            <option value="chainlink">Chainlink (LINK)</option>
+                        </select>
+                    </div>
 
-                        <div class="form-group">
-                            <label for="amount_usdt">Amount (USDT)</label>
-                            <input type="number" id="amount_usdt" name="amount_usdt" 
-                                   placeholder="Enter amount in USDT" required>
-                        </div>
+                    <div class="form-group">
+                        <label for="amount_usdt">Amount (USDT)</label>
+                        <input type="number" id="amount_usdt" name="amount_usdt" 
+                               placeholder="Enter amount in USDT" required>
+                    </div>
 
-                        <div class="form-group">
-                            <label for="order_type">Order Type</label>
-                            <select id="order_type" name="order_type" required>
-                                <option value="market">Market Order</option>
-                                <option value="limit">Limit Order</option>
-                            </select>
-                        </div>
+                    <div class="form-group">
+                        <label for="order_type">Order Type</label>
+                        <select id="order_type" name="order_type" required>
+                            <option value="market">Market Order</option>
+                            <option value="limit">Limit Order</option>
+                        </select>
+                    </div>
 
-                        <div class="form-group" id="limit_price_container" style="display: none;">
-                            <label for="limit_price">Limit Price (USDT)</label>
-                            <input type="number" id="limit_price" name="limit_price" 
-                                   step="0.000001" min="0.000001" 
-                                   placeholder="Enter limit price">
-                        </div>
+                    <div class="form-group" id="limit_price_container" style="display: none;">
+                        <label for="limit_price">Limit Price (USDT)</label>
+                        <input type="number" id="limit_price" name="limit_price" 
+                               step="0.000001" min="0.000001" 
+                               placeholder="Enter limit price">
+                    </div>
 
-                        <button type="submit">Place Order</button>
-                    </form>
-                </div>
-
-                <div class="trade-report">
-                    <h2>Active Trades</h2>
-                    <table id="tradesTable">
-                        <thead>
-                            <tr>
-                                <th>Coin</th>
-                                <th>Amount (USDT)</th>
-                                <th>Entry Price</th>
-                                <th>Current Price</th>
-                                <th>P/L</th>
-                                <th>Fees</th>
-                                <th>ROI</th>
-                                <th>Status</th>
-                                <th>Action</th>
-                            </tr>
-                        </thead>
-                        <tbody id="tradesTableBody">
-                            {% if active_trades %}
-                                {% for trade in active_trades %}
-                                <tr data-trade-id="{{ trade.id }}">
-                                    <td>{{ trade.coin }}</td>
-                                    <td>{{ trade.amount_usdt }}</td>
-                                    <td>{{ trade.entry_price }}</td>
-                                    <td>{{ trade.current_price }}</td>
-                                    <td class="profit-loss {{ 'positive' if trade.profit_loss >= 0 else 'negative' }}">{{ trade.profit_loss }}</td>
-                                    <td>{{ trade.fees }}</td>
-                                    <td>{{ "%.2f"|format(trade.roi) if trade.roi is not none else "N/A" }}%</td>
-                                    <td class="{{ 'status-open' if trade.status == 'Open' else 'status-pending' }}">{{ trade.status }}</td>
-                                    <td>
-                                        {% if trade.status == 'Open' %}
-                                        <button onclick="closeTrade('{{ trade.id }}')" class="close-btn">Close</button>
-                                        {% else %}
-                                        <button onclick="declineTrade('{{ trade.id }}')" class="decline-btn">Decline</button>
-                                        {% endif %}
-                                    </td>
-                                </tr>
-                                {% endfor %}
-                            {% else %}
-                            <tr>
-                                <td colspan="9" style="text-align: center; padding: 20px; color: #777;">No active trades to display.</td>
-                            </tr>
-                            {% endif %}
-                        </tbody>
-                    </table>
-
-                    <h2>Trade History</h2>
-                    <table id="historyTable">
-                        <thead>
-                            <tr>
-                                <th>Coin</th>
-                                <th>Amount (USDT)</th>
-                                <th>Entry Price</th>
-                                <th>Exit Price</th>
-                                <th>P/L</th>
-                                <th>Fees</th>
-                                <th>Status</th>
-                                <th>Time</th>
-                            </tr>
-                        </thead>
-                        <tbody id="historyTableBody">
-                            {% if trade_history %}
-                                {% for trade in trade_history %}
-                                <tr>
-                                    <td>{{ trade.coin }}</td>
-                                    <td>{{ "%.2f"|format(trade.amount_usdt) }}</td>
-                                    <td>{{ "%.2f"|format(trade.entry_price) }}</td>
-                                    <td>{{ "%.2f"|format(trade.exit_price) if trade.exit_price else "N/A" }}</td>
-                                    <td class="profit-loss {{ 'positive' if trade.profit_loss >= 0 else 'negative' }}">
-                                        {{ "%.2f"|format(trade.profit_loss) }}
-                                    </td>
-                                    <td>{{ "%.2f"|format(trade.fees) }}</td>
-                                    <td>{{ trade.status }}</td>
-                                    <td>{{ trade.entry_time }}</td>
-                                </tr>
-                                {% endfor %}
-                            {% else %}
-                            <tr>
-                                <td colspan="8" style="text-align: center; padding: 20px; color: #777;">No trade history to display.</td>
-                            </tr>
-                            {% endif %}
-                        </tbody>
-                    </table>
-                </div>
+                    <button type="submit">Place Order</button>
+                </form>
             </div>
-        </main>
 
-        <script src="{{ url_for('static', path='/js/main.js') }}"></script>
-    </body>
+            <div class="trade-report">
+                <h2>Active Trades</h2>
+                <table id="tradesTable">
+                    <thead>
+                        <tr>
+                            <th>Coin</th>
+                            <th>Amount (USDT)</th>
+                            <th>Entry Price</th>
+                            <th>Current Price</th>
+                            <th>P/L</th>
+                            <th>Fees</th>
+                            <th>ROI</th>
+                            <th>Status</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tradesTableBody">
+                        {% if active_trades %}
+                            {% for trade in active_trades %}
+                            <tr data-trade-id="{{ trade.id }}">
+                                <td>{{ trade.coin }}</td>
+                                <td>{{ trade.amount_usdt }}</td>
+                                <td>{{ trade.entry_price }}</td>
+                                <td>{{ trade.current_price }}</td>
+                                <td class="profit-loss {{ 'positive' if trade.profit_loss >= 0 else 'negative' }}">{{ trade.profit_loss }}</td>
+                                <td>{{ trade.fees }}</td>
+                                <td>{{ "%.2f"|format(trade.roi) if trade.roi is not none else "N/A" }}%</td>
+                                <td class="{{ 'status-open' if trade.status == 'Open' else 'status-pending' }}">{{ trade.status }}</td>
+                                <td>
+                                    {% if trade.status == 'Open' %}
+                                    <button onclick="closeTrade('{{ trade.id }}')" class="close-btn">Close</button>
+                                    {% else %}
+                                    <button onclick="declineTrade('{{ trade.id }}')" class="decline-btn">Decline</button>
+                                    {% endif %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        {% else %}
+                        <tr>
+                            <td colspan="9" style="text-align: center; padding: 20px; color: #777;">No active trades to display.</td>
+                        </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+
+                <h2>Trade History</h2>
+                <table id="historyTable">
+                    <thead>
+                        <tr>
+                            <th>Coin</th>
+                            <th>Amount (USDT)</th>
+                            <th>Entry Price</th>
+                            <th>Exit Price</th>
+                            <th>P/L</th>
+                            <th>Fees</th>
+                            <th>Status</th>
+                            <th>Time</th>
+                        </tr>
+                    </thead>
+                    <tbody id="historyTableBody">
+                        {% if trade_history %}
+                            {% for trade in trade_history %}
+                            <tr>
+                                <td>{{ trade.coin }}</td>
+                                <td>{{ "%.2f"|format(trade.amount_usdt) }}</td>
+                                <td>{{ "%.2f"|format(trade.entry_price) }}</td>
+                                <td>{{ "%.2f"|format(trade.exit_price) if trade.exit_price else "N/A" }}</td>
+                                <td class="profit-loss {{ 'positive' if trade.profit_loss >= 0 else 'negative' }}">
+                                    {{ "%.2f"|format(trade.profit_loss) }}
+                                </td>
+                                <td>{{ "%.2f"|format(trade.fees) }}</td>
+                                <td>{{ trade.status }}</td>
+                                <td>{{ trade.entry_time }}</td>
+                            </tr>
+                            {% endfor %}
+                        {% else %}
+                        <tr>
+                            <td colspan="8" style="text-align: center; padding: 20px; color: #777;">No trade history to display.</td>
+                        </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+
+    <script src="{{ url_for('static', path='/js/main.js') }}"></script>
+    <script>
+        async function createTrade(event) {
+            event.preventDefault();
+            const form = event.target;
+            const submitButton = form.querySelector('button[type="submit"]');
+            const errorContainer = document.getElementById('error-container');
+            
+            try {
+                submitButton.disabled = true;
+                submitButton.textContent = 'Creating Trade...';
+                
+                const formData = new FormData(form);
+                const response = await fetch('/trade', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        coin: formData.get('coin'),
+                        amount: parseFloat(formData.get('amount')),
+                        order_type: formData.get('order_type'),
+                        limit_price: formData.get('limit_price') ? parseFloat(formData.get('limit_price')) : null
+                    })
+                });
+
+                const data = await response.json();
+                
+                if (!response.ok) {
+                    throw new Error(data.detail || 'Failed to create trade');
+                }
+
+                // Clear form and error message
+                form.reset();
+                errorContainer.innerHTML = '';
+                
+                // Show success message
+                const successMessage = document.createElement('div');
+                successMessage.className = 'success-message';
+                successMessage.textContent = 'Trade created successfully!';
+                errorContainer.appendChild(successMessage);
+                
+                // Remove success message after 3 seconds
+                setTimeout(() => {
+                    successMessage.remove();
+                }, 3000);
+
+            } catch (error) {
+                console.error('Error creating trade:', error);
+                
+                // Create error message element
+                const errorMessage = document.createElement('div');
+                errorMessage.className = 'error-message';
+                
+                // Handle specific error cases
+                if (error.message.includes('Insufficient USDT balance')) {
+                    const balanceMatch = error.message.match(/Required: ([\d.]+) USDT \(including fees\), Available: ([\d.]+) USDT/);
+                    const requiredBalance = balanceMatch ? balanceMatch[1] : '0';
+                    const availableBalance = balanceMatch ? balanceMatch[2] : '0';
+                    const missingAmount = (parseFloat(requiredBalance) - parseFloat(availableBalance)).toFixed(2);
+                    
+                    errorMessage.innerHTML = `
+                        <div>
+                            <strong>Insufficient Balance</strong>
+                            <p>You don't have enough USDT to complete this trade.</p>
+                            <div class="balance-info">
+                                <div>Required Amount (including fees): <strong>${requiredBalance} USDT</strong></div>
+                                <div>Available Balance: <strong>${availableBalance} USDT</strong></div>
+                                <div>Missing Amount: <strong>${missingAmount} USDT</strong></div>
+                            </div>
+                            <p class="hint">Note: The required amount includes a 0.1% trading fee.</p>
+                        </div>
+                    `;
+                } else if (error.message.includes('Invalid price')) {
+                    errorMessage.innerHTML = `
+                        <div>
+                            <strong>Invalid Price</strong>
+                            <p>The limit price you entered is not valid. Please check the current market price and try again.</p>
+                        </div>
+                    `;
+                } else if (error.message.includes('Error checking account balance')) {
+                    errorMessage.innerHTML = `
+                        <div>
+                            <strong>Balance Check Error</strong>
+                            <p>Unable to verify your account balance. Please try again in a few moments.</p>
+                        </div>
+                    `;
+                } else {
+                    errorMessage.textContent = error.message;
+                }
+                
+                // Clear previous error messages
+                errorContainer.innerHTML = '';
+                errorContainer.appendChild(errorMessage);
+                
+            } finally {
+                submitButton.disabled = false;
+                submitButton.textContent = 'Create Trade';
+            }
+        }
+
+        // Add error container to the form
+        document.addEventListener('DOMContentLoaded', function() {
+            const form = document.querySelector('form');
+            const errorContainer = document.createElement('div');
+            errorContainer.id = 'error-container';
+            form.insertBefore(errorContainer, form.firstChild);
+        });
+    </script>
+</body>
 </html>
