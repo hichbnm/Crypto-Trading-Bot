@@ -7,14 +7,14 @@
       "quantity": 0.00096198,
       "order_type": "market",
       "entry_price": 103952.0,
-      "current_price": 104057.0,
+      "current_price": 104099.0,
       "status": "Open",
       "limit_price": null,
       "entry_time": "2025-06-13T05:27:06.335546",
       "exit_time": null,
-      "profit_loss": -0.1,
+      "profit_loss": -0.06,
       "fees": 0.2,
-      "roi": -0.1
+      "roi": -0.06
     },
     {
       "id": "a32fe597-d631-4293-ac39-efc700896bde",
@@ -23,14 +23,14 @@
       "quantity": 0.00961982,
       "order_type": "market",
       "entry_price": 103952.0,
-      "current_price": 104057.0,
+      "current_price": 104099.0,
       "status": "Open",
       "limit_price": null,
       "entry_time": "2025-06-13T05:27:22.042097",
       "exit_time": null,
-      "profit_loss": -0.99,
+      "profit_loss": -0.59,
       "fees": 2.0,
-      "roi": -0.1
+      "roi": -0.06
     },
     {
       "id": "1568c300-d460-40ae-b20d-fbb52e26d1b4",
@@ -55,14 +55,14 @@
       "quantity": 0.00961982,
       "order_type": "market",
       "entry_price": 103952.0,
-      "current_price": 104057.0,
+      "current_price": 104099.0,
       "status": "Open",
       "limit_price": null,
       "entry_time": "2025-06-13T05:27:56.972543",
       "exit_time": null,
-      "profit_loss": -0.99,
+      "profit_loss": -0.59,
       "fees": 2.0,
-      "roi": -0.1
+      "roi": -0.06
     },
     {
       "id": "dfd4668f-40d7-42a7-97e2-e33371bad277",
@@ -71,14 +71,14 @@
       "quantity": 9.61982453,
       "order_type": "market",
       "entry_price": 103952.0,
-      "current_price": 104057.0,
+      "current_price": 104099.0,
       "status": "Open",
       "limit_price": null,
       "entry_time": "2025-06-13T05:28:02.562428",
       "exit_time": null,
-      "profit_loss": -990.93,
-      "fees": 2001.01,
-      "roi": -0.1
+      "profit_loss": -587.3,
+      "fees": 2001.41,
+      "roi": -0.06
     }
   ],
   "trade_history": [
