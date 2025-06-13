@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Trade Report</title>
+</head>
+<body>
+    <h1>Trade Report</h1>
+    <table border="1">
+        <tr>
+            <th>Coin</th>
+            <th>Amount</th>
+            <th>Buy Price</th>
+            <th>Sell Price</th>
+            <th>Fee</th>
+            <th>Gross Profit</th>
+            <th>Net Profit</th>
+            <th>Status</th>
+        </tr>
+        {% for trade in report_data %}
+        <tr>
+            <td>{{ trade.coin }}</td>
+            <td>{{ trade.amount }}</td>
+            <td>{{ trade.buy_price }}</td>
+            <td>{{ trade.sell_price }}</td>
+            <td>{{ trade.fee }}</td>
+            <td>{{ trade.gross_profit }}</td>
+            <td>{{ trade.net_profit }}</td>
+            <td>{{ trade.status }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+</body>
+</html>
