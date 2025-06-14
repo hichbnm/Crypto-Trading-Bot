@@ -263,11 +263,17 @@ def load_trades():
                 for trade in loaded_active_trades:
                     if 'roi' not in trade:
                         trade['roi'] = 0.0
+                    # Ensure each trade has a unique ID
+                    if 'id' not in trade:
+                        trade['id'] = str(uuid.uuid4())
 
                 # Ensure 'roi' field is present in all loaded trade history
                 for trade in loaded_trade_history:
                     if 'roi' not in trade:
                         trade['roi'] = 0.0
+                    # Ensure each trade has a unique ID
+                    if 'id' not in trade:
+                        trade['id'] = str(uuid.uuid4())
                         
                 return loaded_active_trades, loaded_trade_history
     except Exception as e:
@@ -277,9 +283,24 @@ def load_trades():
 def save_trades():
     """Save trades to the JSON file."""
     try:
+        # Remove any duplicate trades based on ID
+        unique_active_trades = []
+        seen_ids = set()
+        for trade in active_trades:
+            if trade['id'] not in seen_ids:
+                seen_ids.add(trade['id'])
+                unique_active_trades.append(trade)
+
+        unique_trade_history = []
+        seen_ids = set()
+        for trade in trade_history:
+            if trade['id'] not in seen_ids:
+                seen_ids.add(trade['id'])
+                unique_trade_history.append(trade)
+
         data = {
-            'active_trades': active_trades,
-            'trade_history': trade_history
+            'active_trades': unique_active_trades,
+            'trade_history': unique_trade_history
         }
         with open(TRADES_FILE, 'w') as f:
             json.dump(data, f, indent=2)
@@ -584,15 +605,24 @@ async def lifespan(app: FastAPI):
         raise ValueError(f"Error verifying Binance API connection: {str(e)}")
 
     async def monitor_trades():
-        """Monitor active trades and update prices"""
+        """Monitor active trades and update their status."""
         while True:
             try:
-                for trade in active_trades[:]:
+                for trade in active_trades[:]:  # Create a copy to avoid modification during iteration
                     try:
                         # Get current price
                         current_price = await fetch_price(trade["coin"])
                         if current_price is None:
                             continue
+                        
+                        # Initialize price history if not exists
+                        if "price_history" not in trade:
+                            trade["price_history"] = []
+                        
+                        # Add current price to history (keep last 20 prices for better pattern recognition)
+                        trade["price_history"].append(current_price)
+                        if len(trade["price_history"]) > 20:
+                            trade["price_history"] = trade["price_history"][-20:]
                         
                         # Update trade data
                         trade["current_price"] = current_price
@@ -611,23 +641,90 @@ async def lifespan(app: FastAPI):
                             metrics = calculate_trade_metrics(trade, current_price)
                             trade.update(metrics)
                             
-                            # Check for auto-close conditions
-                            if trade["roi"] >= trade["take_profit"]:  # Take profit
-                                await close_trade(trade["id"])
-                            elif trade["roi"] <= -trade["stop_loss"]:  # Stop loss
-                                await close_trade(trade["id"])
+                            # Enhanced high turn point detection with 7-price window
+                            if len(trade["price_history"]) >= 7:  # Need at least 7 prices for pattern detection
+                                prices = trade["price_history"][-7:]  # Get last 7 prices
+                                
+                                # Calculate price changes
+                                price_changes = [prices[i] - prices[i-1] for i in range(1, len(prices))]
+                                
+                                # Find the highest price in the sequence
+                                highest_price = max(prices)
+                                highest_index = prices.index(highest_price)
+                                
+                                # Check for high turn point pattern:
+                                # 1. Must have at least 2 consecutive increases before the peak
+                                # 2. Must have at least 2 consecutive decreases after the peak
+                                # 3. Must have at least 2 consecutive decreases after the peak
+                                # 4. Must have at least 2 consecutive decreases after the peak
+                                
+                                # Calculate average of first 3 prices
+                                avg_start = sum(prices[:3]) / 3
+                                
+                                # Check for consecutive increases before peak
+                                has_increases = True
+                                for i in range(highest_index - 2, highest_index):
+                                    if i < 0 or price_changes[i] <= 0:
+                                        has_increases = False
+                                        break
+                                
+                                # Check for consecutive decreases after peak
+                                has_decreases = True
+                                for i in range(highest_index, highest_index + 2):
+                                    if i >= len(price_changes) or price_changes[i] >= 0:
+                                        has_decreases = False
+                                        break
+                                
+                                # Check if peak is significantly higher than start
+                                significant_peak = (highest_price - avg_start) / avg_start >= 0.005  # 0.5% higher
+                                
+                                is_high_turn = (
+                                    has_increases and
+                                    has_decreases and
+                                    significant_peak
+                                )
+                                
+                                if is_high_turn:
+                                    # Calculate potential profit at this point
+                                    entry_value = float(trade["quantity"]) * float(trade["entry_price"])
+                                    current_value = float(trade["quantity"]) * current_price
+                                    gross_profit = current_value - entry_value
+                                    
+                                    # Calculate fees
+                                    entry_fee = entry_value * 0.001  # 0.1% entry fee
+                                    exit_fee = current_value * 0.001  # 0.1% exit fee
+                                    total_fees = entry_fee + exit_fee
+                                    
+                                    # Calculate net profit
+                                    net_profit = gross_profit - total_fees
+                                    net_profit_percentage = (net_profit / entry_value) * 100
+                                    
+                                    # Log the high turn point detection
+                                    logger.info(
+                                        f"High turn point detected for trade {trade['id']}:\n"
+                                        f"Price pattern: {prices}\n"
+                                        f"Price changes: {price_changes}\n"
+                                        f"Peak price: {highest_price} at index {highest_index}\n"
+                                        f"Average start price: {avg_start:.2f}\n"
+                                        f"Net profit: {net_profit_percentage:.2f}%"
+                                    )
+                                    
+                                    # If net profit is >= 10%, close the trade
+                                    if net_profit_percentage >= 1:
+                                        logger.info(f"Closing trade {trade['id']} at high turn point with {net_profit_percentage:.2f}% net profit")
+                                        await close_trade(trade["id"])
                         
-                        # Save trades to file
-                        save_trades()
-                        
-                        # Broadcast update
-                        await broadcast_trade_update(trade)
-                        
+                        # Check for auto-close conditions
+                        if trade["roi"] >= trade["take_profit"]:  # Take profit
+                            await close_trade(trade["id"])
+                        elif trade["roi"] <= -trade["stop_loss"]:  # Stop loss
+                            await close_trade(trade["id"])
+                    
                     except Exception as e:
-                        logger.error(f"Error updating trade {trade['id']}: {str(e)}")
+                        logger.error(f"Error monitoring trade {trade.get('id', 'unknown')}: {str(e)}")
                         continue
                 
-                await asyncio.sleep(1)  # Update every second
+                await asyncio.sleep(1)  # Check every second
                 
             except Exception as e:
                 logger.error(f"Error in monitor_trades: {str(e)}")
@@ -650,11 +747,11 @@ async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     connected_clients.add(websocket)
     logger.info(f"New WebSocket connection. Total clients: {len(connected_clients)}")
-    
     try:
-        # Send initial trade data
-        for trade in active_trades:
-            try:
+        # Send all active trades in a single trade_update message
+        try:
+            trades_data = []
+            for trade in active_trades:
                 trade_data = {
                     "id": trade.get("id"),
                     "coin": trade.get("coin"),
@@ -669,11 +766,14 @@ async def websocket_endpoint(websocket: WebSocket):
                     "stop_loss": trade.get("stop_loss", STOP_LOSS_PERCENTAGE),
                     "entry_time": format_datetime(trade.get("entry_time")) if trade.get("entry_time") else "N/A"
                 }
-                await websocket.send_json(trade_data)
-            except Exception as e:
-                logger.error(f"Error sending initial trade data: {str(e)}")
-                break
-        
+                trades_data.append(trade_data)
+            await websocket.send_json({
+                "type": "trade_update",
+                "trades": trades_data
+            })
+        except Exception as e:
+            logger.error(f"Error sending initial trade data: {str(e)}")
+
         while True:
             try:
                 data = await websocket.receive_text()
@@ -688,54 +788,72 @@ async def websocket_endpoint(websocket: WebSocket):
 @app.get("/", response_class=HTMLResponse)
 async def home(request: Request, user: str = Depends(require_auth)):
     """Render the home page."""
-    processed_trades = []
+    def trade_key(trade):
+        return (
+            trade.get("coin"),
+            float(trade.get("amount_usdt", trade.get("amount", 0.0))),
+            float(trade.get("entry_price", 0.0)),
+            trade.get("status")
+        )
+    unique_trades = {}
     for trade in active_trades:
-        # Ensure current_price is available for ROI calculation
-        current_price = await fetch_price(trade["coin"])
-        if current_price is None:
-            current_price = trade.get("current_price", 0.0) # Use existing if fetch fails
+        key = trade_key(trade)
+        if key not in unique_trades:
+            current_price = await fetch_price(trade["coin"])
+            if current_price is None:
+                current_price = trade.get("current_price", 0.0)
+            metrics = calculate_trade_metrics(trade, current_price)
+            processed_trade = {
+                "id": trade.get("id"),
+                "coin": trade.get("coin"),
+                "amount_usdt": trade.get("amount_usdt", trade.get("amount", 0.0)),
+                "entry_price": trade.get("entry_price", 0.0),
+                "current_price": current_price,
+                "status": trade.get("status"),
+                "profit_loss": metrics.get("profit_loss", 0.0),
+                "fees": metrics.get("fees", 0.0),
+                "roi": metrics.get("roi", 0.0),
+                "take_profit": trade.get("take_profit", TAKE_PROFIT_PERCENTAGE),
+                "stop_loss": trade.get("stop_loss", STOP_LOSS_PERCENTAGE),
+                "entry_time": format_datetime(trade.get("entry_time")) if trade.get("entry_time") else "N/A"
+            }
+            unique_trades[key] = processed_trade
+    processed_trades = list(unique_trades.values())
 
-        # Calculate metrics for the trade including ROI
-        metrics = calculate_trade_metrics(trade, current_price)
-
-        processed_trade = {
-            "id": trade.get("id"),
-            "coin": trade.get("coin"),
-            "amount_usdt": trade.get("amount_usdt", trade.get("amount", 0.0)),
-            "entry_price": trade.get("entry_price", 0.0),
-            "current_price": current_price,
-            "status": trade.get("status"),
-            "profit_loss": metrics.get("profit_loss", 0.0),
-            "fees": metrics.get("fees", 0.0),
-            "roi": metrics.get("roi", 0.0), # Add ROI here
-            "take_profit": trade.get("take_profit", TAKE_PROFIT_PERCENTAGE),
-            "stop_loss": trade.get("stop_loss", STOP_LOSS_PERCENTAGE),
-            "entry_time": format_datetime(trade.get("entry_time")) if trade.get("entry_time") else "N/A"
-        }
-        processed_trades.append(processed_trade)
-
-    processed_history = []
+    def history_key(trade):
+        return (
+            trade.get("coin"),
+            float(trade.get("amount_usdt", trade.get("amount", 0.0))),
+            float(trade.get("entry_price", 0.0)),
+            float(trade.get("exit_price", 0.0)),
+            trade.get("status")
+        )
+    unique_history = {}
     for trade in trade_history:
-        processed_history.append({
-            "id": trade.get("id"),
-            "coin": trade.get("coin"),
-            "amount_usdt": trade.get("amount_usdt", trade.get("amount", 0.0)),
-            "entry_price": trade.get("entry_price", 0.0),
-            "exit_price": trade.get("exit_price", None),
-            "profit_loss": trade.get("profit_loss", 0.0),
-            "fees": trade.get("fees", 0.0),
-            "status": trade.get("status"),
-            "entry_time": format_datetime(trade.get("entry_time")) if trade.get("entry_time") else "N/A",
-            "exit_time": format_datetime(trade.get("exit_time")) if trade.get("exit_time") else "N/A",
-            "roi": trade.get("roi", 0.0), # Ensure ROI is passed to history as well
-            "take_profit": trade.get("take_profit", TAKE_PROFIT_PERCENTAGE),
-            "stop_loss": trade.get("stop_loss", STOP_LOSS_PERCENTAGE)
-        })
+        key = history_key(trade)
+        if key not in unique_history:
+            processed_history = {
+                "id": trade.get("id"),
+                "coin": trade.get("coin"),
+                "amount_usdt": trade.get("amount_usdt", trade.get("amount", 0.0)),
+                "entry_price": trade.get("entry_price", 0.0),
+                "exit_price": trade.get("exit_price", None),
+                "profit_loss": trade.get("profit_loss", 0.0),
+                "fees": trade.get("fees", 0.0),
+                "status": trade.get("status"),
+                "entry_time": format_datetime(trade.get("entry_time")) if trade.get("entry_time") else "N/A",
+                "exit_time": format_datetime(trade.get("exit_time")) if trade.get("exit_time") else "N/A",
+                "roi": trade.get("roi", 0.0),
+                "take_profit": trade.get("take_profit", TAKE_PROFIT_PERCENTAGE),
+                "stop_loss": trade.get("stop_loss", STOP_LOSS_PERCENTAGE)
+            }
+            unique_history[key] = processed_history
+    processed_history = list(unique_history.values())
 
     return templates.TemplateResponse("index.html", {
         "request": request,
         "active_trades": processed_trades,
-        "trade_history": processed_history # Pass processed history
+        "trade_history": processed_history
     })
 
 class TradeRequest(BaseModel):
@@ -1217,7 +1335,14 @@ async def decline_trade(trade_id: str, user: str = Depends(require_auth)):
 @app.get("/active-trades")
 async def get_active_trades(user: str = Depends(require_auth)):
     """Get all active trades."""
-    return active_trades
+    # Remove any duplicate trades based on ID
+    unique_trades = []
+    seen_ids = set()
+    for trade in active_trades:
+        if trade['id'] not in seen_ids:
+            seen_ids.add(trade['id'])
+            unique_trades.append(trade)
+    return unique_trades
 
 @app.get("/account-balance")
 async def get_account_balance(user: str = Depends(require_auth)):

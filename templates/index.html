@@ -612,31 +612,7 @@
                         </tr>
                     </thead>
                     <tbody id="active-trades">
-                        {% for trade in active_trades %}
-                        <tr>
-                            <td>{{ trade.coin }}</td>
-                            <td>{{ "%.2f"|format(trade.amount_usdt) }} USDT</td>
-                            <td>{{ "%.2f"|format(trade.entry_price) }}</td>
-                            <td>{{ "%.2f"|format(trade.current_price) }}</td>
-                            <td class="profit-loss {{ 'positive' if trade.profit_loss >= 0 else 'negative' }}">
-                                {{ "%.2f"|format(trade.profit_loss) }}
-                            </td>
-                            <td>{{ "%.2f"|format(trade.fees) }}</td>
-                            <td>{{ "%.1f"|format(trade.take_profit) }}%</td>
-                            <td>{{ "%.1f"|format(trade.stop_loss) }}%</td>
-                            <td class="{% if trade.roi > 0 %}profit{% else %}loss{% endif %}">
-                                {{ "%.2f"|format(trade.roi) }}%
-                            </td>
-                            <td>{{ trade.status }}</td>
-                            <td>
-                                {% if trade.status == "Open" %}
-                                <button class="close-btn" onclick="closeTrade('{{ trade.id }}')">Close</button>
-                                {% elif trade.status == "Pending" %}
-                                <button class="decline-btn" onclick="declineTrade('{{ trade.id }}')">Decline</button>
-                                {% endif %}
-                            </td>
-                        </tr>
-                        {% endfor %}
+                        <!-- Table will be filled by JavaScript -->
                     </tbody>
                 </table>
 
@@ -683,6 +659,219 @@
 
     <script src="{{ url_for('static', path='/js/main.js') }}"></script>
     <script>
+        // Add this at the beginning of your script section
+        const activeTradesMap = new Map();
+        let isSubmitting = false;
+
+        function updateActiveTradesTable(trades) {
+            const tbody = document.getElementById('active-trades');
+            tbody.innerHTML = ''; // Clear existing table rows
+
+            activeTradesMap.clear(); // Clear the map to prevent duplicates
+
+            // Update the map with new trades
+            trades.forEach(trade => {
+                if (trade.id) {
+                    activeTradesMap.set(trade.id, trade);
+                }
+            });
+
+            // Render trades from the map
+            activeTradesMap.forEach(trade => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                    <td>${trade.coin}</td>
+                    <td>${parseFloat(trade.amount_usdt).toFixed(2)} USDT</td>
+                    <td>${parseFloat(trade.entry_price).toFixed(2)}</td>
+                    <td>${parseFloat(trade.current_price).toFixed(2)}</td>
+                    <td class="profit-loss ${trade.profit_loss >= 0 ? 'positive' : 'negative'}">
+                        ${parseFloat(trade.profit_loss).toFixed(2)}
+                    </td>
+                    <td>${parseFloat(trade.fees).toFixed(2)}</td>
+                    <td>${parseFloat(trade.take_profit).toFixed(1)}%</td>
+                    <td>${parseFloat(trade.stop_loss).toFixed(1)}%</td>
+                    <td class="${trade.roi > 0 ? 'profit' : 'loss'}">
+                        ${parseFloat(trade.roi).toFixed(2)}%
+                    </td>
+                    <td>${trade.status}</td>
+                    <td>
+                        ${trade.status === "Open" 
+                            ? `<button class="close-btn" onclick="closeTrade('${trade.id}')">Close</button>`
+                            : trade.status === "Pending"
+                                ? `<button class="decline-btn" onclick="declineTrade('${trade.id}')">Decline</button>`
+                                : ''}
+                    </td>
+                `;
+                tbody.appendChild(row);
+            });
+            
+            // Update active trades count
+            document.getElementById('active-trades-count').textContent = activeTradesMap.size;
+
+            // --- Calculate and update P/L header values ---
+            // Calculate active P/L
+            let activePL = 0;
+            activeTradesMap.forEach(trade => {
+                activePL += Number(trade.profit_loss) || 0;
+            });
+
+            // Get history P/L from the table (or fetch from backend if you have an endpoint)
+            let historyPL = 0;
+            const historyRows = document.querySelectorAll('#historyTableBody tr');
+            historyRows.forEach(row => {
+                const plCell = row.querySelector('.profit-loss');
+                if (plCell) {
+                    historyPL += Number(plCell.textContent) || 0;
+                }
+            });
+
+            const totalPL = activePL + historyPL;
+
+            // Update header
+            const totalPLSpan = document.getElementById('total-pl');
+            const activePLSpan = document.getElementById('active-pl');
+            const historyPLSpan = document.getElementById('history-pl');
+
+            if (totalPLSpan) {
+                totalPLSpan.textContent = `$${totalPL.toFixed(2)}`;
+                totalPLSpan.className = 'stat-value total-pl ' + (totalPL >= 0 ? 'positive' : 'negative');
+            }
+            if (activePLSpan) {
+                activePLSpan.textContent = `Active: $${activePL.toFixed(2)}`;
+            }
+            if (historyPLSpan) {
+                historyPLSpan.textContent = `History: $${historyPL.toFixed(2)}`;
+            }
+
+            // Debug logging
+            console.log('ActivePL:', activePL, 'HistoryPL:', historyPL, 'TotalPL:', totalPL);
+        }
+
+        // Initialize trades from server-side data
+        document.addEventListener('DOMContentLoaded', function() {
+            // Do NOT call updateActiveTradesTable here!
+            // Only update via WebSocket
+            const ws = new WebSocket(`ws://${window.location.host}/ws`);
+            ws.onmessage = function(event) {
+                const data = JSON.parse(event.data);
+                if (data.type === 'trade_update') {
+                    updateActiveTradesTable(data.trades);
+                }
+            };
+            ws.onclose = function() {
+                console.log('WebSocket connection closed');
+            };
+
+            // Remove any existing event listeners
+            const form = document.getElementById('tradeForm');
+            const newForm = form.cloneNode(true);
+            form.parentNode.replaceChild(newForm, form);
+
+            // Add single event listener for form submission
+            newForm.addEventListener('submit', async function(event) {
+                event.preventDefault();
+                
+                if (isSubmitting) {
+                    return; // Prevent double submission
+                }
+                
+                isSubmitting = true;
+                const submitButton = this.querySelector('button[type="submit"]');
+                const errorContainer = document.getElementById('error-container');
+                
+                try {
+                    submitButton.disabled = true;
+                    submitButton.textContent = 'Creating Trade...';
+                    
+                    const formData = new FormData(this);
+                    const amount = formData.get('amount');
+                    const coin = formData.get('coin');
+                    const orderType = formData.get('order_type');
+                    const limitPrice = formData.get('limit_price');
+                    const takeProfit = formData.get('take_profit');
+                    const stopLoss = formData.get('stop_loss');
+
+                    const tradeData = {
+                        coin: coin,
+                        amount: parseFloat(amount),
+                        order_type: orderType,
+                        limit_price: limitPrice ? parseFloat(limitPrice) : null,
+                        take_profit: takeProfit ? parseFloat(takeProfit) : null,
+                        stop_loss: stopLoss ? parseFloat(stopLoss) : null
+                    };
+                    
+                    // Validate amount is a valid number
+                    const amountNum = parseFloat(amount);
+                    if (isNaN(amountNum) || amountNum <= 0) {
+                        displayTradeError('Please enter a valid amount greater than 0');
+                        return;
+                    }
+                    
+                    const response = await fetch('/trade', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(tradeData)
+                    });
+
+                    let data;
+                    try {
+                        data = await response.json();
+                    } catch (jsonError) {
+                        console.error('Error parsing JSON response:', jsonError, response);
+                        displayTradeError('Received an invalid response from the server.');
+                        return;
+                    }
+                    
+                    if (!response.ok) {
+                        displayTradeError(data.detail || 'Order failed. Please try again.');
+                        return;
+                    }
+
+                    // Clear form and error message (if successful)
+                    this.reset();
+                    errorContainer.innerHTML = '';
+                    
+                    // Show success message
+                    const successMessage = document.createElement('div');
+                    successMessage.className = 'success-message';
+                    successMessage.textContent = 'Trade created successfully!';
+                    errorContainer.appendChild(successMessage);
+                    
+                    // Remove success message after 3 seconds
+                    setTimeout(() => {
+                        successMessage.remove();
+                    }, 3000);
+
+                } catch (error) {
+                    console.error('Error creating trade:', error);
+                    displayTradeError(error.message);
+                } finally {
+                    submitButton.disabled = false;
+                    submitButton.textContent = 'Place Order';
+                    isSubmitting = false;
+                }
+            });
+
+            // Add this for toggling limit price input
+            const orderTypeSelect = document.getElementById('order_type');
+            const limitPriceContainer = document.getElementById('limit_price_container');
+            if (orderTypeSelect && limitPriceContainer) {
+                orderTypeSelect.addEventListener('change', function() {
+                    if (this.value === 'limit') {
+                        limitPriceContainer.style.display = 'block';
+                    } else {
+                        limitPriceContainer.style.display = 'none';
+                    }
+                });
+                // Trigger on page load in case 'limit' is pre-selected
+                if (orderTypeSelect.value === 'limit') {
+                    limitPriceContainer.style.display = 'block';
+                }
+            }
+        });
+
         function formatAmount(input) {
             // Replace comma with period for internal processing
             let value = input.value.replace(',', '.');
@@ -720,87 +909,6 @@
             return true;
         }
 
-        async function createTrade(event) {
-            event.preventDefault();
-            const form = event.target;
-            const submitButton = form.querySelector('button[type="submit"]');
-            const errorContainer = document.getElementById('error-container');
-            
-            try {
-                submitButton.disabled = true;
-                submitButton.textContent = 'Creating Trade...';
-                
-                const formData = new FormData(form);
-                const amount = formData.get('amount');
-                const coin = formData.get('coin');
-                const orderType = formData.get('order_type');
-                const limitPrice = formData.get('limit_price');
-                const takeProfit = formData.get('take_profit');
-                const stopLoss = formData.get('stop_loss');
-
-                const tradeData = {
-                    coin: coin,
-                    amount: parseFloat(amount),
-                    order_type: orderType,
-                    limit_price: limitPrice ? parseFloat(limitPrice) : null,
-                    take_profit: takeProfit ? parseFloat(takeProfit) : null,
-                    stop_loss: stopLoss ? parseFloat(stopLoss) : null
-                };
-                
-                // Validate amount is a valid number
-                const amountNum = parseFloat(amount);
-                if (isNaN(amountNum) || amountNum <= 0) {
-                    displayTradeError('Please enter a valid amount greater than 0');
-                    return; // Prevent further execution and alerts
-                }
-                
-                const response = await fetch('/trade', {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify(tradeData)
-                });
-
-                let data;
-                try {
-                    data = await response.json();
-                } catch (jsonError) {
-                    console.error('Error parsing JSON response:', jsonError, response);
-                    displayTradeError('Received an invalid response from the server.');
-                    return; // Prevent further execution and alerts
-                }
-                
-                if (!response.ok) {
-                    // If response is not OK, set the display message directly
-                    displayTradeError(data.detail || 'Order failed. Please try again.');
-                    return; // Essential: Exit the function to prevent any subsequent alerts
-                }
-
-                // Clear form and error message (if successful)
-                form.reset();
-                errorContainer.innerHTML = '';
-                
-                // Show success message
-                const successMessage = document.createElement('div');
-                successMessage.className = 'success-message';
-                successMessage.textContent = 'Trade created successfully!';
-                errorContainer.appendChild(successMessage);
-                
-                // Remove success message after 3 seconds
-                setTimeout(() => {
-                    successMessage.remove();
-                }, 3000);
-
-            } catch (error) {
-                console.error('Error creating trade:', error);
-                displayTradeError(error.message); // Use the new common error display function
-            } finally {
-                submitButton.disabled = false;
-                submitButton.textContent = 'Place Order';
-            }
-        }
-
         // Helper function to display trade-related errors in the error-container
         function displayTradeError(message) {
             const errorContainer = document.getElementById('error-container');
@@ -834,17 +942,6 @@
             submitButton.disabled = false;
             submitButton.textContent = 'Place Order';
         }
-
-        // Add error container to the form
-        document.addEventListener('DOMContentLoaded', function() {
-            const form = document.querySelector('form');
-            const errorContainer = document.createElement('div');
-            errorContainer.id = 'error-container';
-            form.insertBefore(errorContainer, form.firstChild);
-            
-            // Add form submit event listener
-            form.addEventListener('submit', createTrade);
-        });
     </script>
 </body>
 </html>
