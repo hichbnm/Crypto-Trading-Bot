@@ -444,7 +444,7 @@ function handleTradeSubmit(event) {
             submitButton.style.backgroundColor = '';
         }, 2000);
         
-        alert('Failed to create trade. Please try again.');
+
     });
 }
 

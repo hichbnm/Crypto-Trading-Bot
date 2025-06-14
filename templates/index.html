@@ -550,8 +550,12 @@
 
                     <div class="form-group">
                         <label for="amount_usdt">Amount (USDT)</label>
-                        <input type="number" id="amount_usdt" name="amount_usdt" 
-                               placeholder="Enter amount in USDT" required>
+                        <input type="text" id="amount_usdt" name="amount_usdt" 
+                               placeholder="Enter amount in USDT" required
+                               pattern="[0-9]*[.,]?[0-9]+"
+                               oninput="formatAmount(this)"
+                               onkeypress="return validateAmountInput(event)">
+                        <div class="hint">Use comma or period as decimal separator</div>
                     </div>
 
                     <div class="form-group">
@@ -661,6 +665,43 @@
 
     <script src="{{ url_for('static', path='/js/main.js') }}"></script>
     <script>
+        function formatAmount(input) {
+            // Replace comma with period for internal processing
+            let value = input.value.replace(',', '.');
+            
+            // Remove any non-numeric characters except decimal point
+            value = value.replace(/[^\d.]/g, '');
+            
+            // Ensure only one decimal point
+            const parts = value.split('.');
+            if (parts.length > 2) {
+                value = parts[0] + '.' + parts.slice(1).join('');
+            }
+            
+            // Update input value
+            input.value = value;
+        }
+
+        function validateAmountInput(event) {
+            const char = String.fromCharCode(event.which);
+            const input = event.target;
+            const value = input.value;
+            
+            // Allow numbers, comma, and period
+            if (!/[\d,.]/.test(char)) {
+                event.preventDefault();
+                return false;
+            }
+            
+            // If decimal separator (comma or period) is already present, don't allow another one
+            if ((char === ',' || char === '.') && (value.includes(',') || value.includes('.'))) {
+                event.preventDefault();
+                return false;
+            }
+            
+            return true;
+        }
+
         async function createTrade(event) {
             event.preventDefault();
             const form = event.target;
@@ -672,6 +713,15 @@
                 submitButton.textContent = 'Creating Trade...';
                 
                 const formData = new FormData(form);
+                const amount = formData.get('amount_usdt').replace(',', '.');
+                
+                // Validate amount is a valid number
+                const amountNum = parseFloat(amount);
+                if (isNaN(amountNum) || amountNum <= 0) {
+                    displayTradeError('Please enter a valid amount greater than 0');
+                    return; // Prevent further execution and alerts
+                }
+                
                 const response = await fetch('/trade', {
                     method: 'POST',
                     headers: {
@@ -679,19 +729,28 @@
                     },
                     body: JSON.stringify({
                         coin: formData.get('coin'),
-                        amount: parseFloat(formData.get('amount')),
+                        amount: amountNum,
                         order_type: formData.get('order_type'),
-                        limit_price: formData.get('limit_price') ? parseFloat(formData.get('limit_price')) : null
+                        limit_price: formData.get('limit_price') ? parseFloat(formData.get('limit_price').replace(',', '.')) : null
                     })
                 });
 
-                const data = await response.json();
+                let data;
+                try {
+                    data = await response.json();
+                } catch (jsonError) {
+                    console.error('Error parsing JSON response:', jsonError, response);
+                    displayTradeError('Received an invalid response from the server.');
+                    return; // Prevent further execution and alerts
+                }
                 
                 if (!response.ok) {
-                    throw new Error(data.detail || 'Failed to create trade');
+                    // If response is not OK, set the display message directly
+                    displayTradeError(data.detail || 'Order failed. Please try again.');
+                    return; // Essential: Exit the function to prevent any subsequent alerts
                 }
 
-                // Clear form and error message
+                // Clear form and error message (if successful)
                 form.reset();
                 errorContainer.innerHTML = '';
                 
@@ -708,56 +767,45 @@
 
             } catch (error) {
                 console.error('Error creating trade:', error);
-                
-                // Create error message element
-                const errorMessage = document.createElement('div');
-                errorMessage.className = 'error-message';
-                
-                // Handle specific error cases
-                if (error.message.includes('Insufficient USDT balance')) {
-                    const balanceMatch = error.message.match(/Required: ([\d.]+) USDT \(including fees\), Available: ([\d.]+) USDT/);
-                    const requiredBalance = balanceMatch ? balanceMatch[1] : '0';
-                    const availableBalance = balanceMatch ? balanceMatch[2] : '0';
-                    const missingAmount = (parseFloat(requiredBalance) - parseFloat(availableBalance)).toFixed(2);
-                    
-                    errorMessage.innerHTML = `
-                        <div>
-                            <strong>Insufficient Balance</strong>
-                            <p>You don't have enough USDT to complete this trade.</p>
-                            <div class="balance-info">
-                                <div>Required Amount (including fees): <strong>${requiredBalance} USDT</strong></div>
-                                <div>Available Balance: <strong>${availableBalance} USDT</strong></div>
-                                <div>Missing Amount: <strong>${missingAmount} USDT</strong></div>
-                            </div>
-                            <p class="hint">Note: The required amount includes a 0.1% trading fee.</p>
-                        </div>
-                    `;
-                } else if (error.message.includes('Invalid price')) {
-                    errorMessage.innerHTML = `
-                        <div>
-                            <strong>Invalid Price</strong>
-                            <p>The limit price you entered is not valid. Please check the current market price and try again.</p>
-                        </div>
-                    `;
-                } else if (error.message.includes('Error checking account balance')) {
-                    errorMessage.innerHTML = `
-                        <div>
-                            <strong>Balance Check Error</strong>
-                            <p>Unable to verify your account balance. Please try again in a few moments.</p>
-                        </div>
-                    `;
-                } else {
-                    errorMessage.textContent = error.message;
-                }
-                
-                // Clear previous error messages
-                errorContainer.innerHTML = '';
-                errorContainer.appendChild(errorMessage);
-                
+                displayTradeError(error.message); // Use the new common error display function
             } finally {
                 submitButton.disabled = false;
-                submitButton.textContent = 'Create Trade';
+                submitButton.textContent = 'Place Order';
             }
+        }
+
+        // Helper function to display trade-related errors in the error-container
+        function displayTradeError(message) {
+            const errorContainer = document.getElementById('error-container');
+            const submitButton = document.querySelector('form button[type="submit"]');
+
+            // Clear previous error messages
+            errorContainer.innerHTML = '';
+
+            let displayMessage = 'Failed to place order. Please check your input and try again.';
+
+            // Specific handling for insufficient balance
+            if (message && message.startsWith('Insufficient USDT balance')) {
+                displayMessage = "You don't have enough balance";
+            } else if (message === 'An issue occurred while verifying your USDT balance. Please try again.') {
+                // Suppress this specific backend error as per previous request, just reset form
+                submitButton.disabled = false;
+                submitButton.textContent = 'Place Order';
+                return; 
+            } else if (message) {
+                // For other specific errors, use their message
+                displayMessage = message;
+            }
+            
+            // Create and append error message element
+            const errorMessageElement = document.createElement('div');
+            errorMessageElement.className = 'error-message';
+            errorMessageElement.textContent = displayMessage;
+            errorContainer.appendChild(errorMessageElement);
+
+            // Ensure button is re-enabled if this function is called directly
+            submitButton.disabled = false;
+            submitButton.textContent = 'Place Order';
         }
 
         // Add error container to the form
@@ -766,6 +814,9 @@
             const errorContainer = document.createElement('div');
             errorContainer.id = 'error-container';
             form.insertBefore(errorContainer, form.firstChild);
+            
+            // Add form submit event listener
+            form.addEventListener('submit', createTrade);
         });
     </script>
 </body>
