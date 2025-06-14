@@ -305,6 +305,44 @@
       "exit_time": "2025-06-14 01:59:06",
       "exit_price": 105783.46000000002,
       "exit_quantity": 9e-05
+    },
+    {
+      "id": "6386ce12-720b-479a-8851-08b2007a351c",
+      "coin": "bitcoin",
+      "amount_usdt": 10.0,
+      "quantity": 0.0001,
+      "order_type": "market",
+      "entry_price": 104417.97,
+      "current_price": 104417.95999999999,
+      "status": "Closed",
+      "limit_price": null,
+      "entry_time": "2025-06-14 17:58:18",
+      "profit_loss": -0.02,
+      "fees": 0.02,
+      "roi": -0.2,
+      "binance_order_id": 44705451351,
+      "exit_time": "2025-06-14 17:58:30",
+      "exit_price": 104417.95999999999,
+      "exit_quantity": 9e-05
+    },
+    {
+      "id": "08f59795-c8e9-40f0-8709-768eb5379b9e",
+      "coin": "bitcoin",
+      "amount_usdt": 10.0,
+      "quantity": 0.0001,
+      "order_type": "market",
+      "entry_price": 105050.26,
+      "current_price": 104683.49,
+      "status": "Closed",
+      "limit_price": null,
+      "entry_time": "2025-06-14 12:51:28",
+      "profit_loss": -0.06,
+      "fees": 0.02,
+      "roi": -0.55,
+      "binance_order_id": 44699204584,
+      "exit_time": "2025-06-14 18:18:29",
+      "exit_price": 104683.49,
+      "exit_quantity": 9.9e-06
     }
   ]
 }

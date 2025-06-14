@@ -46,7 +46,7 @@ connected_clients: Set[WebSocket] = set()
 
 # User credentials (in production, use a proper database)
 USERS = {
-    "admin": "admin123"  # username: password
+    "armen": "armen123"  # username: password
 }
 
 # Session management
