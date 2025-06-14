@@ -296,48 +296,76 @@ async def execute_binance_order(symbol: str, side: str, order_type: str, quantit
     order_type: 'MARKET' or 'LIMIT'
     """
     try:
-        # Get exchange info for step size and precision
-        exchange_info = binance_client.get_exchange_info()
-        symbol_info = next((s for s in exchange_info['symbols'] if s['symbol'] == symbol), None)
-        if not symbol_info:
-            raise HTTPException(status_code=400, detail=f"Invalid symbol: {symbol}")
-            
-        # Get step size and precision
-        step_size = None
-        min_qty = None
-        for filter in symbol_info['filters']:
-            if filter['filterType'] == 'LOT_SIZE':
-                step_size = float(filter['stepSize'])
-                min_qty = float(filter['minQty'])
-                break
-                
-        if not step_size or not min_qty:
-            raise HTTPException(status_code=400, detail=f"Could not get lot size info for {symbol}")
-            
-        # Get symbol precision
-        precision = len(str(step_size).rstrip('0').split('.')[-1])
+        # Map coin name to Binance symbol only if provided a coin (e.g., "bitcoin").
+        # If the caller already supplies a Binance symbol like "BTCUSDT", keep it.
+        mapped_symbol = SYMBOL_MAPPING.get(symbol.lower())
+        if mapped_symbol:
+            symbol = mapped_symbol
+        # Normalise symbol to upper case for downstream processing / logging consistency
+        symbol = symbol.upper()
+        # Validation: a Binance symbol must end with USDT for our spot trading logic
+        if not symbol or not symbol.endswith('USDT'):
+            raise HTTPException(status_code=400, detail=f"Unsupported coin or symbol: {symbol}")
         
-        # Format quantity according to precision
-        formatted_quantity = format(quantity, f'.{precision}f')
+        # Get exchange info for the symbol
+        try:
+            exchange_info = binance_client.get_exchange_info()
+            symbol_info = next((s for s in exchange_info['symbols'] if s['symbol'] == symbol), None)
+            if not symbol_info:
+                raise HTTPException(status_code=400, detail=f"Could not get exchange info for {symbol}")
+        except Exception as e:
+            logger.error(f"Error getting exchange info: {str(e)}")
+            raise HTTPException(status_code=400, detail=f"Error getting exchange info: {str(e)}")
+        
+        # Get current price directly from Binance for the symbol
+        try:
+            ticker = binance_client.get_symbol_ticker(symbol=symbol)
+            if not ticker or 'price' not in ticker:
+                raise HTTPException(status_code=400, detail="Could not fetch current price")
+            current_price = float(ticker['price'])
+            logger.info(f"Current price for {symbol}: {current_price}")
+        except BinanceAPIException as e:
+            logger.error(f"Binance API error while fetching price: {str(e)}")
+            raise HTTPException(status_code=400, detail=f"Error fetching price: {str(e)}")
+        except Exception as e:
+            logger.error(f"Unexpected error while fetching price: {str(e)}")
+            raise HTTPException(status_code=400, detail=f"Error fetching price: {str(e)}")
+        
+        # Convert values to float
+        quantity = float(quantity)  # quantity is already the asset amount to trade
+        logger.info(
+            f"Received quantity parameter: {quantity} {symbol.replace('USDT', '')} (will validate & format)"
+        )
+        
+        # Get symbol precision and format quantity
+        try:
+            # Get LOT_SIZE filter
+            lot_size_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'LOT_SIZE'), None)
+            if not lot_size_filter:
+                raise HTTPException(status_code=400, detail=f"Could not get LOT_SIZE filter for {symbol}")
+            
+            step_size = float(lot_size_filter['stepSize'])
+            min_qty = float(lot_size_filter['minQty'])
+            precision = len(str(step_size).rstrip('0').split('.')[-1])
+            
+            # Round down to the nearest valid step size
+            quantity = math.floor(quantity / step_size) * step_size
+            formatted_quantity = format(quantity, f'.{precision}f')
+            logger.info(f"Formatted quantity: {formatted_quantity} {symbol.replace('USDT', '')}")
+            
+            # Validate minimum quantity
+            if float(formatted_quantity) < min_qty:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Calculated quantity {formatted_quantity} is below minimum {min_qty} for {symbol}"
+                )
+        except Exception as e:
+            logger.error(f"Error formatting quantity: {str(e)}")
+            raise HTTPException(status_code=400, detail=f"Error formatting quantity: {str(e)}")
         
         # Check balance before executing order
         if side == 'BUY':
             usdt_balance = await get_binance_balance('USDT')
-            # Get current price directly from Binance for the symbol
-            try:
-                ticker = binance_client.get_symbol_ticker(symbol=symbol)
-                if not ticker or 'price' not in ticker:
-                    raise HTTPException(
-                        status_code=400,
-                        detail="Could not fetch current price for balance check"
-                    )
-                current_price = float(ticker['price'])
-            except BinanceAPIException as e:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Error fetching price: {str(e)}"
-                )
-                
             required_usdt = float(formatted_quantity) * (price if price else current_price)
             if usdt_balance < required_usdt:
                 raise HTTPException(
@@ -381,13 +409,6 @@ async def execute_binance_order(symbol: str, side: str, order_type: str, quantit
                     detail=f"Calculated quantity {formatted_quantity} exceeds available balance {coin_balance} {base_asset}"
                 )
         
-        # Validate final quantity
-        if float(formatted_quantity) < min_qty:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Quantity {formatted_quantity} is below minimum {min_qty}"
-            )
-        
         # Execute the order
         try:
             if order_type == 'MARKET':
@@ -398,6 +419,7 @@ async def execute_binance_order(symbol: str, side: str, order_type: str, quantit
                     'type': order_type,
                     'quantity': formatted_quantity
                 }
+                logger.info(f"Executing market order with params: {params}")
                 order = binance_client.create_order(**params)
             else:  # LIMIT order
                 if not price:
@@ -533,6 +555,8 @@ async def broadcast_trade_update(trade):
             "profit_loss": trade.get("profit_loss", 0.0),
             "fees": trade.get("fees", 0.0),
             "roi": trade.get("roi", 0.0),
+            "take_profit": trade.get("take_profit", TAKE_PROFIT_PERCENTAGE),
+            "stop_loss": trade.get("stop_loss", STOP_LOSS_PERCENTAGE),
             "entry_time": format_datetime(trade.get("entry_time")) if trade.get("entry_time") else "N/A"
         }
         
@@ -588,9 +612,9 @@ async def lifespan(app: FastAPI):
                             trade.update(metrics)
                             
                             # Check for auto-close conditions
-                            if trade["roi"] >= TAKE_PROFIT_PERCENTAGE:  # Take profit
+                            if trade["roi"] >= trade["take_profit"]:  # Take profit
                                 await close_trade(trade["id"])
-                            elif trade["roi"] <= -STOP_LOSS_PERCENTAGE:  # Stop loss
+                            elif trade["roi"] <= -trade["stop_loss"]:  # Stop loss
                                 await close_trade(trade["id"])
                         
                         # Save trades to file
@@ -641,6 +665,8 @@ async def websocket_endpoint(websocket: WebSocket):
                     "profit_loss": trade.get("profit_loss", 0.0),
                     "fees": trade.get("fees", 0.0),
                     "roi": trade.get("roi", 0.0),
+                    "take_profit": trade.get("take_profit", TAKE_PROFIT_PERCENTAGE),
+                    "stop_loss": trade.get("stop_loss", STOP_LOSS_PERCENTAGE),
                     "entry_time": format_datetime(trade.get("entry_time")) if trade.get("entry_time") else "N/A"
                 }
                 await websocket.send_json(trade_data)
@@ -682,6 +708,8 @@ async def home(request: Request, user: str = Depends(require_auth)):
             "profit_loss": metrics.get("profit_loss", 0.0),
             "fees": metrics.get("fees", 0.0),
             "roi": metrics.get("roi", 0.0), # Add ROI here
+            "take_profit": trade.get("take_profit", TAKE_PROFIT_PERCENTAGE),
+            "stop_loss": trade.get("stop_loss", STOP_LOSS_PERCENTAGE),
             "entry_time": format_datetime(trade.get("entry_time")) if trade.get("entry_time") else "N/A"
         }
         processed_trades.append(processed_trade)
@@ -699,7 +727,9 @@ async def home(request: Request, user: str = Depends(require_auth)):
             "status": trade.get("status"),
             "entry_time": format_datetime(trade.get("entry_time")) if trade.get("entry_time") else "N/A",
             "exit_time": format_datetime(trade.get("exit_time")) if trade.get("exit_time") else "N/A",
-            "roi": trade.get("roi", 0.0) # Ensure ROI is passed to history as well
+            "roi": trade.get("roi", 0.0), # Ensure ROI is passed to history as well
+            "take_profit": trade.get("take_profit", TAKE_PROFIT_PERCENTAGE),
+            "stop_loss": trade.get("stop_loss", STOP_LOSS_PERCENTAGE)
         })
 
     return templates.TemplateResponse("index.html", {
@@ -713,6 +743,8 @@ class TradeRequest(BaseModel):
     amount: float
     order_type: str
     limit_price: Optional[float] = None
+    take_profit: Optional[float] = None
+    stop_loss: Optional[float] = None
 
 async def _create_trade_logic(trade_request: TradeRequest):
     try:
@@ -720,10 +752,26 @@ async def _create_trade_logic(trade_request: TradeRequest):
         if trade_request.amount <= 0:
             raise HTTPException(status_code=400, detail="Amount must be greater than 0")
         
-        # Get Binance symbol first
-        symbol = SYMBOL_MAPPING.get(trade_request.coin.lower())
-        if not symbol:
-            raise HTTPException(status_code=400, detail=f"Unsupported coin: {trade_request.coin}")
+        # Map coin name to Binance symbol only if provided a coin (e.g., "bitcoin").
+        # If the caller already supplies a Binance symbol like "BTCUSDT", keep it.
+        mapped_symbol = SYMBOL_MAPPING.get(trade_request.coin.lower())
+        if mapped_symbol:
+            symbol = mapped_symbol
+        # Normalise symbol to upper case for downstream processing / logging consistency
+        symbol = symbol.upper()
+        # Validation: a Binance symbol must end with USDT for our spot trading logic
+        if not symbol or not symbol.endswith('USDT'):
+            raise HTTPException(status_code=400, detail=f"Unsupported coin or symbol: {symbol}")
+        
+        # Get exchange info for the symbol
+        try:
+            exchange_info = binance_client.get_exchange_info()
+            symbol_info = next((s for s in exchange_info['symbols'] if s['symbol'] == symbol), None)
+            if not symbol_info:
+                raise HTTPException(status_code=400, detail=f"Could not get exchange info for {symbol}")
+        except Exception as e:
+            logger.error(f"Error getting exchange info: {str(e)}")
+            raise HTTPException(status_code=400, detail=f"Error getting exchange info: {str(e)}")
         
         # Get current price directly from Binance for the symbol
         try:
@@ -739,13 +787,39 @@ async def _create_trade_logic(trade_request: TradeRequest):
             logger.error(f"Unexpected error while fetching price: {str(e)}")
             raise HTTPException(status_code=400, detail=f"Error fetching price: {str(e)}")
         
-        # Convert values to float
+        # Convert values to float (USDT amount)
         amount_usdt = float(trade_request.amount)
         logger.info(f"Creating trade with amount: {amount_usdt} USDT")
         
         # Calculate quantity based on USDT amount
         quantity = amount_usdt / current_price
         logger.info(f"Calculated quantity: {quantity} {trade_request.coin}")
+        
+        # Get symbol precision and format quantity
+        try:
+            # Get LOT_SIZE filter
+            lot_size_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'LOT_SIZE'), None)
+            if not lot_size_filter:
+                raise HTTPException(status_code=400, detail=f"Could not get LOT_SIZE filter for {symbol}")
+            
+            step_size = float(lot_size_filter['stepSize'])
+            min_qty = float(lot_size_filter['minQty'])
+            precision = len(str(step_size).rstrip('0').split('.')[-1])
+            
+            # Round down to the nearest valid step size
+            quantity = math.floor(quantity / step_size) * step_size
+            formatted_quantity = format(quantity, f'.{precision}f')
+            logger.info(f"Formatted quantity: {formatted_quantity} {symbol.replace('USDT', '')}")
+            
+            # Validate minimum quantity
+            if float(formatted_quantity) < min_qty:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Calculated quantity {formatted_quantity} is below minimum {min_qty} for {symbol}"
+                )
+        except Exception as e:
+            logger.error(f"Error formatting quantity: {str(e)}")
+            raise HTTPException(status_code=400, detail=f"Error formatting quantity: {str(e)}")
         
         # Check if we have enough USDT balance
         try:
@@ -760,19 +834,10 @@ async def _create_trade_logic(trade_request: TradeRequest):
             logger.error(f"Error checking USDT balance: {str(e)}")
             raise HTTPException(status_code=400, detail=f"An issue occurred while verifying your USDT balance. Please try again.")
         
-        # Get symbol precision and format quantity
-        try:
-            precision = await get_symbol_precision(symbol)
-            formatted_quantity = format(quantity, f'.{precision}f')
-            logger.info(f"Formatted quantity: {formatted_quantity} {trade_request.coin}")
-        except Exception as e:
-            logger.error(f"Error formatting quantity: {str(e)}")
-            raise HTTPException(status_code=400, detail=f"Error formatting quantity: {str(e)}")
-        
         # Execute the order on Binance
         try:
             if trade_request.order_type == "market":
-                logger.info(f"Creating market order for {symbol}")
+                logger.info(f"Creating market order for {symbol} with quantity {formatted_quantity}")
                 order = await execute_binance_order(
                     symbol=symbol,
                     side='BUY',
@@ -784,12 +849,6 @@ async def _create_trade_logic(trade_request: TradeRequest):
             else:  # limit order
                 if not trade_request.limit_price or trade_request.limit_price <= 0:
                     raise HTTPException(status_code=400, detail="Limit price must be greater than 0 for limit orders")
-                
-                # Get exchange info for price validation
-                exchange_info = binance_client.get_exchange_info()
-                symbol_info = next((s for s in exchange_info['symbols'] if s['symbol'] == symbol), None)
-                if not symbol_info:
-                    raise HTTPException(status_code=400, detail=f"Could not get exchange info for {symbol}")
                 
                 # Get price filter info
                 price_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'PRICE_FILTER'), None)
@@ -838,6 +897,10 @@ async def _create_trade_logic(trade_request: TradeRequest):
         except BinanceAPIException as e:
             logger.error(f"Binance API error while creating order: {str(e)}")
             raise HTTPException(status_code=400, detail=f"Error creating order: {str(e)}")
+        except HTTPException as e:
+            # Propagate HTTP errors (generated inside execute_binance_order) with full detail
+            logger.error(f"HTTP error while creating order: {e.detail}")
+            raise e
         except Exception as e:
             logger.error(f"Unexpected error while creating order: {str(e)}")
             raise HTTPException(status_code=400, detail=f"Error creating order: {str(e)}")
@@ -860,7 +923,9 @@ async def _create_trade_logic(trade_request: TradeRequest):
             "profit_loss": 0.0,
             "fees": entry_fee,
             "roi": 0.0,
-            "binance_order_id": order['orderId']  # Store Binance order ID
+            "binance_order_id": order['orderId'],  # Store Binance order ID
+            "take_profit": trade_request.take_profit if trade_request.take_profit is not None else TAKE_PROFIT_PERCENTAGE,
+            "stop_loss": trade_request.stop_loss if trade_request.stop_loss is not None else STOP_LOSS_PERCENTAGE
         }
         
         # Add to active trades
@@ -1005,15 +1070,14 @@ async def close_trade(trade_id: str, user: str = Depends(require_auth)):
                     quantity=float(formatted_quantity)
                 )
 
-            # First sell attempt
+            # Check if the available balance is below the minimum quantity right away
             initial_balance = get_current_balance()
             if initial_balance < min_qty:
-                logger.warning(f"Initial balance {initial_balance} {base_asset} is below minimum {min_qty}")
-                # If balance is too small, just mark as closed
+                logger.warning(f"Balance {initial_balance} {base_asset} is below minimum tradeable quantity {min_qty}. Nothing to sell.")
                 trade["status"] = "Closed"
                 trade["exit_time"] = format_datetime(datetime.now().isoformat())
                 trade["exit_price"] = trade["current_price"]
-                trade["exit_quantity"] = initial_balance
+                trade["exit_quantity"] = 0.0
                 metrics = calculate_trade_metrics(trade, trade["current_price"])
                 trade.update(metrics)
                 trade_history.append(trade)
@@ -1022,36 +1086,41 @@ async def close_trade(trade_id: str, user: str = Depends(require_auth)):
                 await broadcast_trade_update(trade)
                 return {
                     "status": "success",
-                    "message": f"Trade closed (balance too small: {initial_balance} {base_asset})",
+                    "message": "Trade closed (balance below minimum lot size)",
                     "trade": trade
                 }
 
-            # Round down to nearest step size
-            quantity = math.floor(initial_balance / step_size) * step_size
-            order = await execute_sell(quantity)
+            # Loop selling attempts until remaining balance is below min_qty or no further quantity can be sold
+            total_filled_quantity = 0.0
+            total_cost = 0.0
 
-            if not order or 'fills' not in order or not order['fills']:
-                raise HTTPException(status_code=500, detail="Invalid order response from Binance")
+            attempt = 0
+            max_attempts = 5  # safety guard to avoid infinite loops
+            while attempt < max_attempts:
+                current_balance = get_current_balance()
+                if current_balance < min_qty:
+                    logger.info(f"Remaining balance {current_balance} {base_asset} is below minimum {min_qty}, stopping sell attempts")
+                    break
 
-            # Calculate first sell metrics
-            total_filled_quantity = sum(float(fill['qty']) for fill in order['fills'])
-            total_cost = sum(float(fill['price']) * float(fill['qty']) for fill in order['fills'])
+                quantity = math.floor(current_balance / step_size) * step_size
+                if quantity < min_qty:
+                    logger.info(f"Calculated quantity {quantity} is below min_qty after rounding, stopping sell attempts")
+                    break
+
+                order = await execute_sell(quantity)
+                if not order or 'fills' not in order or not order['fills']:
+                    logger.warning("Sell order returned no fills, stopping further attempts")
+                    break
+
+                filled_qty = sum(float(fill['qty']) for fill in order['fills'])
+                filled_cost = sum(float(fill['price']) * float(fill['qty']) for fill in order['fills'])
+
+                total_filled_quantity += filled_qty
+                total_cost += filled_cost
+
+                attempt += 1
+
             exit_price = total_cost / total_filled_quantity if total_filled_quantity > 0 else 0
-
-            # Check for remaining balance and try to sell it
-            remaining_balance = get_current_balance()
-            if remaining_balance >= min_qty:
-                logger.info(f"Remaining balance detected: {remaining_balance} {base_asset}, attempting second sell")
-                second_quantity = math.floor(remaining_balance / step_size) * step_size
-                second_order = await execute_sell(second_quantity)
-                
-                if second_order and 'fills' in second_order and second_order['fills']:
-                    # Add second order fills to total
-                    second_filled = sum(float(fill['qty']) for fill in second_order['fills'])
-                    second_cost = sum(float(fill['price']) * float(fill['qty']) for fill in second_order['fills'])
-                    total_filled_quantity += second_filled
-                    total_cost += second_cost
-                    exit_price = total_cost / total_filled_quantity if total_filled_quantity > 0 else 0
 
             # Update trade data
             trade["current_price"] = exit_price

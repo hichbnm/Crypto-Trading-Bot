@@ -207,84 +207,63 @@ function scrollToTop() {
 }
 
 // Enhanced updateTradeData function
-function updateTradeData(data) {
-    const tradesTableBody = document.getElementById('tradesTableBody');
-    if (!tradesTableBody) return;
-
-    const existingRow = document.querySelector(`tr[data-trade-id="${data.id}"]`);
-    
-    if (existingRow) {
-        // Update existing row with animations
-        const cells = existingRow.cells;
-        const oldPrice = parseFloat(cells[3].textContent);
-        const newPrice = parseFloat(data.current_price);
+function updateTradeData(trade) {
+    const row = document.querySelector(`#active-trades tr[data-trade-id="${trade.id}"]`);
+    if (row) {
+        // Update existing row
+        row.querySelector('.coin').textContent = trade.coin;
+        row.querySelector('.amount').textContent = `${parseFloat(trade.amount_usdt).toFixed(2)} USDT`;
+        row.querySelector('.entry-price').textContent = parseFloat(trade.entry_price).toFixed(2);
+        row.querySelector('.current-price').textContent = parseFloat(trade.current_price).toFixed(2);
         
-        cells[0].textContent = data.coin;
-        cells[1].textContent = data.amount_usdt;
-        cells[2].textContent = data.entry_price;
+        // Update P/L
+        const plCell = row.querySelector('.profit-loss');
+        plCell.textContent = parseFloat(trade.profit_loss).toFixed(2);
+        plCell.className = `profit-loss ${parseFloat(trade.profit_loss) >= 0 ? 'positive' : 'negative'}`;
         
-        // Animate price change
-        animatePriceChange(cells[3], newPrice, oldPrice);
-        cells[3].textContent = data.current_price;
+        // Update fees
+        row.querySelector('.fees').textContent = parseFloat(trade.fees).toFixed(2);
         
-        const plCell = cells[4];
-        const oldPL = parseFloat(plCell.textContent);
-        const newPL = parseFloat(data.profit_loss);
+        row.querySelector('.take-profit').textContent = `${parseFloat(trade.take_profit).toFixed(1)}%`;
+        row.querySelector('.stop-loss').textContent = `${parseFloat(trade.stop_loss).toFixed(1)}%`;
         
-        // Animate P/L change
-        animatePriceChange(plCell, newPL, oldPL);
-        plCell.textContent = data.profit_loss;
-        plCell.className = `profit-loss ${data.profit_loss >= 0 ? 'positive' : 'negative'}`;
+        // Update ROI
+        const roiCell = row.querySelector('.roi');
+        roiCell.textContent = `${parseFloat(trade.roi).toFixed(2)}%`;
+        roiCell.className = `roi ${parseFloat(trade.roi) > 0 ? 'profit' : 'loss'}`;
         
-        cells[5].textContent = data.fees;
-        cells[6].textContent = `${data.roi !== undefined && data.roi !== null ? data.roi.toFixed(2) : 'N/A'}%`;
-        cells[7].textContent = data.status;
+        row.querySelector('.status').textContent = trade.status;
         
-        // Update action button without animation
-        const actionCell = cells[8];
-        if (data.status === 'Open') {
-            actionCell.innerHTML = `<button onclick="closeTrade('${data.id}')" class="close-btn">Close</button>`;
-        } else if (data.status === 'Pending') {
-            actionCell.innerHTML = `<button onclick="declineTrade('${data.id}')" class="decline-btn">Decline</button>`;
+        // Update action button
+        const actionCell = row.querySelector('.action');
+        if (trade.status === "Open") {
+            actionCell.innerHTML = `<button class="close-btn" onclick="closeTrade('${trade.id}')">Close</button>`;
+        } else if (trade.status === "Pending") {
+            actionCell.innerHTML = `<button class="decline-btn" onclick="declineTrade('${trade.id}')">Decline</button>`;
+        } else {
+            actionCell.innerHTML = '';
         }
     } else {
-        // If there's a 'No active trades' message, remove it
-        const noTradesRow = tradesTableBody.querySelector('tr td[colspan="9"]');
-        if (noTradesRow) {
-            noTradesRow.parentElement.remove(); // Remove the entire row
-        }
-
-        // Add new row with animation
-        const row = document.createElement('tr');
-        row.setAttribute('data-trade-id', data.id);
-        row.style.opacity = '0';
-        row.style.transform = 'translateY(20px)';
-        
-        row.innerHTML = `
-            <td>${data.coin}</td>
-            <td>${data.amount_usdt}</td>
-            <td>${data.entry_price}</td>
-            <td>${data.current_price}</td>
-            <td class="profit-loss ${data.profit_loss >= 0 ? 'positive' : 'negative'}">${data.profit_loss}</td>
-            <td>${data.fees}</td>
-            <td>${(data.roi !== undefined && data.roi !== null) ? data.roi.toFixed(2) : 'N/A'}%</td>
-            <td class="${data.status === 'Open' ? 'status-open' : 'status-pending'}">${data.status}</td>
-            <td>
-                ${data.status === 'Open' 
-                    ? `<button onclick="closeTrade('${data.id}')" class="close-btn">Close</button>`
-                    : data.status === 'Pending'
-                    ? `<button onclick="declineTrade('${data.id}')" class="decline-btn">Decline</button>`
-                    : ''}
+        // Add new row
+        const newRow = document.createElement('tr');
+        newRow.setAttribute('data-trade-id', trade.id);
+        newRow.innerHTML = `
+            <td class="coin">${trade.coin}</td>
+            <td class="amount">${parseFloat(trade.amount_usdt).toFixed(2)} USDT</td>
+            <td class="entry-price">${parseFloat(trade.entry_price).toFixed(2)}</td>
+            <td class="current-price">${parseFloat(trade.current_price).toFixed(2)}</td>
+            <td class="profit-loss ${parseFloat(trade.profit_loss) >= 0 ? 'positive' : 'negative'}">${parseFloat(trade.profit_loss).toFixed(2)}</td>
+            <td class="fees">${parseFloat(trade.fees).toFixed(2)}</td>
+            <td class="take-profit">${parseFloat(trade.take_profit).toFixed(1)}%</td>
+            <td class="stop-loss">${parseFloat(trade.stop_loss).toFixed(1)}%</td>
+            <td class="roi ${parseFloat(trade.roi) > 0 ? 'profit' : 'loss'}">${parseFloat(trade.roi).toFixed(2)}%</td>
+            <td class="status">${trade.status}</td>
+            <td class="action">
+                ${trade.status === "Open" ? `<button class="close-btn" onclick="closeTrade('${trade.id}')">Close</button>` : 
+                  trade.status === "Pending" ? `<button class="decline-btn" onclick="declineTrade('${trade.id}')">Decline</button>` : ''}
             </td>
         `;
-        
-        tradesTableBody.appendChild(row);
-        
-        // Animate new row
-        setTimeout(() => {
-            row.style.opacity = '1';
-            row.style.transform = 'translateY(0)';
-        }, 50);
+        document.getElementById('active-trades').appendChild(newRow);
     }
 }
 
@@ -396,10 +375,18 @@ function handleTradeSubmit(event) {
     const formData = new FormData(form);
     const tradeData = {
         coin: formData.get('coin'),
-        amount: parseFloat(formData.get('amount_usdt')),
+        amount: parseFloat(formData.get('amount')),
         order_type: formData.get('order_type'),
-        limit_price: formData.get('order_type') === 'limit' ? parseFloat(formData.get('limit_price')) : null
+        limit_price: formData.get('order_type') === 'limit' ? parseFloat(formData.get('limit_price')) : null,
+        take_profit: parseFloat(formData.get('take_profit')),
+        stop_loss: parseFloat(formData.get('stop_loss'))
     };
+    
+    // Remove any existing error messages
+    const errorContainer = document.getElementById('error-container');
+    if (errorContainer) {
+        errorContainer.innerHTML = '';
+    }
     
     fetch('/trade', {
         method: 'POST',
@@ -408,27 +395,59 @@ function handleTradeSubmit(event) {
         },
         body: JSON.stringify(tradeData)
     })
-    .then(response => {
-        if (!response.ok) {
-            throw new Error('Failed to create trade');
-        }
-        return response.json();
-    })
+    .then(response => response.json())
     .then(data => {
-        // Show success state
-        submitButton.textContent = 'Success!';
-        submitButton.style.backgroundColor = 'var(--success-color)';
-        
-        // Reset form
-        form.reset();
-        document.getElementById('limit_price_container').style.display = 'none';
-        
-        // Reset button after delay
-        setTimeout(() => {
-            submitButton.disabled = false;
-            submitButton.textContent = originalText;
-            submitButton.style.backgroundColor = '';
-        }, 2000);
+        if (data.status === 'success') {
+            // Show success state with actual amount used
+            const actualAmount = data.trade.amount_usdt;
+            const originalAmount = tradeData.amount;
+            const difference = originalAmount - actualAmount;
+            
+            submitButton.textContent = 'Success!';
+            submitButton.style.backgroundColor = 'var(--success-color)';
+            
+            // Show info about the actual amount used
+            if (errorContainer) {
+                errorContainer.innerHTML = `
+                    <div class="info-message">
+                        Trade executed successfully!<br>
+                        Requested amount: $${originalAmount.toFixed(2)}<br>
+                        Actual amount used: $${actualAmount.toFixed(2)}<br>
+                        Difference: $${difference.toFixed(2)} (due to fees and minimum quantity requirements)
+                    </div>
+                `;
+            }
+            
+            // Reset form
+            form.reset();
+            document.getElementById('limit_price_container').style.display = 'none';
+            
+            // Reset button after delay
+            setTimeout(() => {
+                submitButton.disabled = false;
+                submitButton.textContent = originalText;
+                submitButton.style.backgroundColor = '';
+                if (errorContainer) {
+                    errorContainer.innerHTML = '';
+                }
+            }, 5000); // Show the message for 5 seconds
+        } else {
+            // Show error state
+            submitButton.textContent = 'Error';
+            submitButton.style.backgroundColor = 'var(--danger-color)';
+            
+            // Show error message
+            if (errorContainer) {
+                errorContainer.innerHTML = `<div class="error-message">${data.message || 'Failed to create trade'}</div>`;
+            }
+            
+            // Reset button after delay
+            setTimeout(() => {
+                submitButton.disabled = false;
+                submitButton.textContent = originalText;
+                submitButton.style.backgroundColor = '';
+            }, 2000);
+        }
     })
     .catch(error => {
         console.error('Error creating trade:', error);
@@ -437,14 +456,17 @@ function handleTradeSubmit(event) {
         submitButton.textContent = 'Error';
         submitButton.style.backgroundColor = 'var(--danger-color)';
         
+        // Show error message
+        if (errorContainer) {
+            errorContainer.innerHTML = `<div class="error-message">${error.message || 'Failed to create trade'}</div>`;
+        }
+        
         // Reset button after delay
         setTimeout(() => {
             submitButton.disabled = false;
             submitButton.textContent = originalText;
             submitButton.style.backgroundColor = '';
         }, 2000);
-        
-
     });
 }
 

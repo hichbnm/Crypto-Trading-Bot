@@ -247,18 +247,19 @@
         }
 
         .profit-loss {
-            font-weight: 600;
-            transition: all 0.3s ease;
+            font-weight: bold;
         }
-
-        .positive {
-            color: #2ecc71;
-            text-shadow: 0 0 10px rgba(46, 204, 113, 0.2);
+        
+        .profit-loss.positive {
+            color: #00c853;
         }
-
-        .negative {
-            color: #e74c3c;
-            text-shadow: 0 0 10px rgba(231, 76, 60, 0.2);
+        
+        .profit-loss.negative {
+            color: #ff3d00;
+        }
+        
+        .fees {
+            color: #666;
         }
 
         .header-container {
@@ -496,6 +497,16 @@
         .balance-info strong {
             color: #0c4a6e;
         }
+
+        .info-message {
+            background-color: var(--success-color);
+            color: white;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+            text-align: center;
+            line-height: 1.5;
+        }
     </style>
 </head>
 <body>
@@ -533,7 +544,8 @@
         <div class="container">
             <div class="trading-form">
                 <h2>Place Your Trade</h2>
-                <form id="tradeForm">
+                <div id="error-container"></div>
+                <form id="tradeForm" onsubmit="return false">
                     <div class="form-group">
                         <label for="coin">Select Cryptocurrency</label>
                         <select id="coin" name="coin" required>
@@ -549,15 +561,19 @@
                     </div>
 
                     <div class="form-group">
-                        <label for="amount_usdt">Amount (USDT)</label>
-                        <input type="text" id="amount_usdt" name="amount_usdt" 
-                               placeholder="Enter amount in USDT" required
-                               pattern="[0-9]*[.,]?[0-9]+"
-                               oninput="formatAmount(this)"
-                               onkeypress="return validateAmountInput(event)">
-                        <div class="hint">Use comma or period as decimal separator</div>
+                        <label for="amount">Amount (USDT)</label>
+                        <input type="number" id="amount" name="amount" step="0.01" required>
                     </div>
-
+                    <div class="form-group">
+                        <label for="take_profit">Take Profit (%)</label>
+                        <input type="number" id="take_profit" name="take_profit" step="0.1" min="0.1" value="10">
+                        <div class="hint">Default: 10%</div>
+                    </div>
+                    <div class="form-group">
+                        <label for="stop_loss">Stop Loss (%)</label>
+                        <input type="number" id="stop_loss" name="stop_loss" step="0.1" min="0.1" value="5">
+                        <div class="hint">Default: 5%</div>
+                    </div>
                     <div class="form-group">
                         <label for="order_type">Order Type</label>
                         <select id="order_type" name="order_type" required>
@@ -588,37 +604,39 @@
                             <th>Current Price</th>
                             <th>P/L</th>
                             <th>Fees</th>
+                            <th>Take Profit</th>
+                            <th>Stop Loss</th>
                             <th>ROI</th>
                             <th>Status</th>
                             <th>Action</th>
                         </tr>
                     </thead>
-                    <tbody id="tradesTableBody">
-                        {% if active_trades %}
-                            {% for trade in active_trades %}
-                            <tr data-trade-id="{{ trade.id }}">
-                                <td>{{ trade.coin }}</td>
-                                <td>{{ trade.amount_usdt }}</td>
-                                <td>{{ trade.entry_price }}</td>
-                                <td>{{ trade.current_price }}</td>
-                                <td class="profit-loss {{ 'positive' if trade.profit_loss >= 0 else 'negative' }}">{{ trade.profit_loss }}</td>
-                                <td>{{ trade.fees }}</td>
-                                <td>{{ "%.2f"|format(trade.roi) if trade.roi is not none else "N/A" }}%</td>
-                                <td class="{{ 'status-open' if trade.status == 'Open' else 'status-pending' }}">{{ trade.status }}</td>
-                                <td>
-                                    {% if trade.status == 'Open' %}
-                                    <button onclick="closeTrade('{{ trade.id }}')" class="close-btn">Close</button>
-                                    {% else %}
-                                    <button onclick="declineTrade('{{ trade.id }}')" class="decline-btn">Decline</button>
-                                    {% endif %}
-                                </td>
-                            </tr>
-                            {% endfor %}
-                        {% else %}
+                    <tbody id="active-trades">
+                        {% for trade in active_trades %}
                         <tr>
-                            <td colspan="9" style="text-align: center; padding: 20px; color: #777;">No active trades to display.</td>
+                            <td>{{ trade.coin }}</td>
+                            <td>{{ "%.2f"|format(trade.amount_usdt) }} USDT</td>
+                            <td>{{ "%.2f"|format(trade.entry_price) }}</td>
+                            <td>{{ "%.2f"|format(trade.current_price) }}</td>
+                            <td class="profit-loss {{ 'positive' if trade.profit_loss >= 0 else 'negative' }}">
+                                {{ "%.2f"|format(trade.profit_loss) }}
+                            </td>
+                            <td>{{ "%.2f"|format(trade.fees) }}</td>
+                            <td>{{ "%.1f"|format(trade.take_profit) }}%</td>
+                            <td>{{ "%.1f"|format(trade.stop_loss) }}%</td>
+                            <td class="{% if trade.roi > 0 %}profit{% else %}loss{% endif %}">
+                                {{ "%.2f"|format(trade.roi) }}%
+                            </td>
+                            <td>{{ trade.status }}</td>
+                            <td>
+                                {% if trade.status == "Open" %}
+                                <button class="close-btn" onclick="closeTrade('{{ trade.id }}')">Close</button>
+                                {% elif trade.status == "Pending" %}
+                                <button class="decline-btn" onclick="declineTrade('{{ trade.id }}')">Decline</button>
+                                {% endif %}
+                            </td>
                         </tr>
-                        {% endif %}
+                        {% endfor %}
                     </tbody>
                 </table>
 
@@ -713,7 +731,21 @@
                 submitButton.textContent = 'Creating Trade...';
                 
                 const formData = new FormData(form);
-                const amount = formData.get('amount_usdt').replace(',', '.');
+                const amount = formData.get('amount');
+                const coin = formData.get('coin');
+                const orderType = formData.get('order_type');
+                const limitPrice = formData.get('limit_price');
+                const takeProfit = formData.get('take_profit');
+                const stopLoss = formData.get('stop_loss');
+
+                const tradeData = {
+                    coin: coin,
+                    amount: parseFloat(amount),
+                    order_type: orderType,
+                    limit_price: limitPrice ? parseFloat(limitPrice) : null,
+                    take_profit: takeProfit ? parseFloat(takeProfit) : null,
+                    stop_loss: stopLoss ? parseFloat(stopLoss) : null
+                };
                 
                 // Validate amount is a valid number
                 const amountNum = parseFloat(amount);
@@ -727,12 +759,7 @@
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({
-                        coin: formData.get('coin'),
-                        amount: amountNum,
-                        order_type: formData.get('order_type'),
-                        limit_price: formData.get('limit_price') ? parseFloat(formData.get('limit_price').replace(',', '.')) : null
-                    })
+                    body: JSON.stringify(tradeData)
                 });
 
                 let data;
