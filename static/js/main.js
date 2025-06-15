@@ -64,6 +64,7 @@ let isConnected = false;
 let reconnectAttempts = 0;
 const maxReconnectAttempts = 5;
 const reconnectDelay = 3000; // 3 seconds
+const activeTradesMap = new Map(); // Keep track of active trades
 
 // DOM Elements
 const connectionStatus = document.getElementById('connection-status');
@@ -244,7 +245,7 @@ function updateTradeData(trade) {
             actionCell.innerHTML = '';
         }
     } else {
-        // Add new row
+        // Add new row only if it doesn't exist
         const newRow = document.createElement('tr');
         newRow.setAttribute('data-trade-id', trade.id);
         newRow.innerHTML = `
@@ -321,9 +322,36 @@ function connectWebSocket() {
     ws.onmessage = function(event) {
         try {
             const data = JSON.parse(event.data);
-            updateTradeData(data);
-            updateActiveTradesCount();
-            updateTotalPL();
+            if (data.type === 'trade_update' && Array.isArray(data.trades)) {
+                // Update the table with new trade data
+                updateActiveTradesTable(data.trades);
+                
+                // Update P/L and ROI for each trade
+                data.trades.forEach(trade => {
+                    if (isValidTrade(trade)) {
+                        const row = document.querySelector(`#active-trades tr[data-trade-id="${trade.id}"]`);
+                        if (row) {
+                            // Update P/L
+                            const plCell = row.querySelector('.profit-loss');
+                            plCell.textContent = parseFloat(trade.profit_loss).toFixed(2);
+                            plCell.className = `profit-loss ${parseFloat(trade.profit_loss) >= 0 ? 'positive' : 'negative'}`;
+                            
+                            // Update ROI
+                            const roiCell = row.querySelector('.roi');
+                            roiCell.textContent = `${parseFloat(trade.roi).toFixed(2)}%`;
+                            roiCell.className = `roi ${parseFloat(trade.roi) > 0 ? 'profit' : 'loss'}`;
+                            
+                            // Update current price
+                            const priceCell = row.querySelector('.current-price');
+                            priceCell.textContent = parseFloat(trade.current_price).toFixed(2);
+                        }
+                    }
+                });
+                
+                // Update total P/L and counts
+                updateActiveTradesCount();
+                updateTotalPL();
+            }
         } catch (error) {
             console.error('Error processing WebSocket message:', error);
         }
@@ -408,7 +436,7 @@ function handleTradeSubmit(event) {
             
             // Show info about the actual amount used
             if (errorContainer) {
-                errorContainer.innerHTML = `
+                let message = `
                     <div class="info-message">
                         Trade executed successfully!<br>
                         Requested amount: $${originalAmount.toFixed(2)}<br>
@@ -416,6 +444,18 @@ function handleTradeSubmit(event) {
                         Difference: $${difference.toFixed(2)} (due to fees and minimum quantity requirements)
                     </div>
                 `;
+                
+                // Add warning if difference is significant
+                if (Math.abs(difference) > 1.0) {
+                    message = `
+                        <div class="warning-message">
+                            <strong>Note:</strong> The actual amount used is different from your requested amount due to minimum quantity requirements.<br>
+                            ${message}
+                        </div>
+                    `;
+                }
+                
+                errorContainer.innerHTML = message;
             }
             
             // Reset form
@@ -497,43 +537,96 @@ async function declineTrade(tradeId) {
     }
 }
 
+// Function to validate trade data
+function isValidTrade(trade) {
+    return trade && 
+           trade.id && 
+           trade.coin && 
+           !isNaN(parseFloat(trade.amount_usdt)) && 
+           !isNaN(parseFloat(trade.entry_price)) && 
+           !isNaN(parseFloat(trade.current_price)) && 
+           !isNaN(parseFloat(trade.profit_loss)) && 
+           !isNaN(parseFloat(trade.fees)) && 
+           !isNaN(parseFloat(trade.roi)) && 
+           !isNaN(parseFloat(trade.take_profit)) && 
+           !isNaN(parseFloat(trade.stop_loss));
+}
+
+// Function to update the active trades table
+function updateActiveTradesTable(trades) {
+    const tbody = document.getElementById('active-trades');
+    if (!tbody) return;
+    
+    // Clear existing rows
+    tbody.innerHTML = '';
+    
+    // Update the map and table
+    activeTradesMap.clear();
+    trades.forEach(trade => {
+        if (isValidTrade(trade)) {
+            activeTradesMap.set(trade.id, trade);
+            addTradeToTable(trade);
+        }
+    });
+    
+    updateActiveTradesCount();
+    updateTotalPL();
+}
+
+// Function to add a single trade to the table
 function addTradeToTable(trade) {
-    const tableBody = document.querySelector('#tradesTableBody');
+    if (!isValidTrade(trade)) return;
+
+    const tbody = document.getElementById('active-trades');
+    if (!tbody) return;
+
     const row = document.createElement('tr');
     row.setAttribute('data-trade-id', trade.id);
-
+    
     // Format numbers with commas and 2 decimal places
     const formatNumber = (num) => {
-        return parseFloat(num).toLocaleString('en-US', {
+        const parsed = parseFloat(num);
+        return isNaN(parsed) ? '0.00' : parsed.toLocaleString('en-US', {
             minimumFractionDigits: 2,
             maximumFractionDigits: 2
         });
     };
 
     row.innerHTML = `
-        <td>${trade.coin}</td>
-        <td>${formatNumber(trade.amount_usdt)}</td>
-        <td>${formatNumber(trade.entry_price)}</td>
+        <td class="coin">${trade.coin}</td>
+        <td class="amount">${formatNumber(trade.amount_usdt)} USDT</td>
+        <td class="entry-price">${formatNumber(trade.entry_price)}</td>
         <td class="current-price">${formatNumber(trade.current_price)}</td>
         <td class="profit-loss ${parseFloat(trade.profit_loss) >= 0 ? 'positive' : 'negative'}">
             ${formatNumber(trade.profit_loss)}
         </td>
-        <td>${formatNumber(trade.fees)}</td>
-        <td>${(trade.roi !== undefined && trade.roi !== null) ? trade.roi.toFixed(2) : 'N/A'}%</td>
-        <td class="${trade.status === 'Open' ? 'status-open' : 'status-pending'}">${trade.status}</td>
-        <td>
+        <td class="fees">${formatNumber(trade.fees)}</td>
+        <td class="take-profit">${parseFloat(trade.take_profit).toFixed(1)}%</td>
+        <td class="stop-loss">${parseFloat(trade.stop_loss).toFixed(1)}%</td>
+        <td class="roi ${parseFloat(trade.roi) > 0 ? 'profit' : 'loss'}">${parseFloat(trade.roi).toFixed(2)}%</td>
+        <td class="status">${trade.status || 'Unknown'}</td>
+        <td class="action">
             ${trade.status === "Open" ? 
-                `<button onclick="closeTrade('${trade.id}')" class="close-btn">Close</button>` : 
-                `<button onclick="declineTrade('${trade.id}')" class="decline-btn">Decline</button>`
-            }
+                `<button class="close-btn" onclick="closeTrade('${trade.id}')">Close</button>` : 
+                trade.status === "Pending" ? 
+                `<button class="decline-btn" onclick="declineTrade('${trade.id}')">Decline</button>` : 
+                ''}
         </td>
     `;
 
-    tableBody.appendChild(row);
-    updateTotalPL(); // Update total P/L when new trade is added
+    tbody.appendChild(row);
 }
 
 function closeTrade(tradeId) {
+    const row = document.querySelector(`tr[data-trade-id="${tradeId}"]`);
+    if (row) {
+        const closeButton = row.querySelector('.close-btn');
+        if (closeButton) {
+            closeButton.disabled = true;
+            closeButton.textContent = 'Closing...';
+        }
+    }
+
     fetch(`/close-trade/${tradeId}`, {
         method: 'POST'
     })
@@ -546,16 +639,44 @@ function closeTrade(tradeId) {
                 setTimeout(() => {
                     row.remove();
                     updateActiveTradesCount();
-                    updateTotalPL(); // Update total P/L when trade is closed
+                    updateTotalPL();
+                    
+                    // Show success message with details
+                    const message = `
+                        Trade closed successfully!
+                        Sold: ${data.trade.exit_quantity.toFixed(8)} ${data.trade.coin}
+                        Price: $${data.trade.exit_price.toFixed(2)}
+                        Total: $${(data.trade.exit_quantity * data.trade.exit_price).toFixed(2)}
+                        P/L: $${data.trade.profit_loss.toFixed(2)}
+                    `;
+                    alert(message);
                 }, 500);
             }
         } else {
             alert('Error closing trade: ' + data.message);
+            // Reset button if there was an error
+            const row = document.querySelector(`tr[data-trade-id="${tradeId}"]`);
+            if (row) {
+                const closeButton = row.querySelector('.close-btn');
+                if (closeButton) {
+                    closeButton.disabled = false;
+                    closeButton.textContent = 'Close';
+                }
+            }
         }
     })
     .catch(error => {
         console.error('Error:', error);
         alert('Error closing trade. Please try again.');
+        // Reset button if there was an error
+        const row = document.querySelector(`tr[data-trade-id="${tradeId}"]`);
+        if (row) {
+            const closeButton = row.querySelector('.close-btn');
+            if (closeButton) {
+                closeButton.disabled = false;
+                closeButton.textContent = 'Close';
+            }
+        }
     });
 }
 

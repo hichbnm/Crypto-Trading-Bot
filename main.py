@@ -206,7 +206,7 @@ def format_datetime(iso_timestamp: str) -> str:
 
 # Price cache with timestamp
 price_cache = {}
-CACHE_DURATION = 60  # Cache duration in seconds
+CACHE_DURATION = 1  # Cache duration in seconds
 RATE_LIMIT_DELAY = PRICE_FETCH_DELAY  # Use the configured delay
 last_request_time = 0
 
@@ -565,26 +565,32 @@ async def broadcast_trade_update(trade):
         return
 
     try:
-        # Prepare trade data for broadcast
-        trade_data = {
-            "id": trade.get("id"),
-            "coin": trade.get("coin"),
-            "amount_usdt": trade.get("amount_usdt", trade.get("amount", 0.0)),
-            "entry_price": trade.get("entry_price", 0.0),
-            "current_price": trade.get("current_price", 0.0),
-            "status": trade.get("status"),
-            "profit_loss": trade.get("profit_loss", 0.0),
-            "fees": trade.get("fees", 0.0),
-            "roi": trade.get("roi", 0.0),
-            "take_profit": trade.get("take_profit", TAKE_PROFIT_PERCENTAGE),
-            "stop_loss": trade.get("stop_loss", STOP_LOSS_PERCENTAGE),
-            "entry_time": format_datetime(trade.get("entry_time")) if trade.get("entry_time") else "N/A"
-        }
+        # Prepare all active trades data
+        trades_data = []
+        for active_trade in active_trades:
+            trade_data = {
+                "id": active_trade.get("id"),
+                "coin": active_trade.get("coin"),
+                "amount_usdt": active_trade.get("amount_usdt", active_trade.get("amount", 0.0)),
+                "entry_price": active_trade.get("entry_price", 0.0),
+                "current_price": active_trade.get("current_price", 0.0),
+                "status": active_trade.get("status"),
+                "profit_loss": active_trade.get("profit_loss", 0.0),
+                "fees": active_trade.get("fees", 0.0),
+                "roi": active_trade.get("roi", 0.0),
+                "take_profit": active_trade.get("take_profit", TAKE_PROFIT_PERCENTAGE),
+                "stop_loss": active_trade.get("stop_loss", STOP_LOSS_PERCENTAGE),
+                "entry_time": format_datetime(active_trade.get("entry_time")) if active_trade.get("entry_time") else "N/A"
+            }
+            trades_data.append(trade_data)
         
         # Broadcast to all connected clients
         for client in connected_clients:
             try:
-                await client.send_json(trade_data)
+                await client.send_json({
+                    "type": "trade_update",
+                    "trades": trades_data
+                })
             except Exception as e:
                 logger.error(f"Error sending trade update to client: {str(e)}")
     except Exception as e:
@@ -614,13 +620,16 @@ async def lifespan(app: FastAPI):
                         current_price = await fetch_price(trade["coin"])
                         if current_price is None:
                             continue
-                        
-                        # Initialize price history if not exists
                         if "price_history" not in trade:
-                            trade["price_history"] = []
+                            trade["price_history"] = [] 
+                        # Initialize price history if not exists
+                        last_price = trade["price_history"][-1] if "price_history" in trade and trade["price_history"] else None
+                        if last_price is not None and current_price == last_price:
+                            continue
                         
                         # Add current price to history (keep last 20 prices for better pattern recognition)
                         trade["price_history"].append(current_price)
+                        logger.info(f"Added price {current_price} to price_history for trade {trade['id']}: {trade['price_history']}")
                         if len(trade["price_history"]) > 20:
                             trade["price_history"] = trade["price_history"][-20:]
                         
@@ -642,83 +651,22 @@ async def lifespan(app: FastAPI):
                             trade.update(metrics)
                             
                             # Enhanced high turn point detection with 7-price window
-                            if len(trade["price_history"]) >= 7:  # Need at least 7 prices for pattern detection
-                                prices = trade["price_history"][-7:]  # Get last 7 prices
-                                
-                                # Calculate price changes
-                                price_changes = [prices[i] - prices[i-1] for i in range(1, len(prices))]
-                                
-                                # Find the highest price in the sequence
-                                highest_price = max(prices)
-                                highest_index = prices.index(highest_price)
-                                
-                                # Check for high turn point pattern:
-                                # 1. Must have at least 2 consecutive increases before the peak
-                                # 2. Must have at least 2 consecutive decreases after the peak
-                                # 3. Must have at least 2 consecutive decreases after the peak
-                                # 4. Must have at least 2 consecutive decreases after the peak
-                                
-                                # Calculate average of first 3 prices
-                                avg_start = sum(prices[:3]) / 3
-                                
-                                # Check for consecutive increases before peak
-                                has_increases = True
-                                for i in range(highest_index - 2, highest_index):
-                                    if i < 0 or price_changes[i] <= 0:
-                                        has_increases = False
-                                        break
-                                
-                                # Check for consecutive decreases after peak
-                                has_decreases = True
-                                for i in range(highest_index, highest_index + 2):
-                                    if i >= len(price_changes) or price_changes[i] >= 0:
-                                        has_decreases = False
-                                        break
-                                
-                                # Check if peak is significantly higher than start
-                                significant_peak = (highest_price - avg_start) / avg_start >= 0.005  # 0.5% higher
-                                
-                                is_high_turn = (
-                                    has_increases and
-                                    has_decreases and
-                                    significant_peak
-                                )
-                                
-                                if is_high_turn:
-                                    # Calculate potential profit at this point
-                                    entry_value = float(trade["quantity"]) * float(trade["entry_price"])
-                                    current_value = float(trade["quantity"]) * current_price
-                                    gross_profit = current_value - entry_value
-                                    
-                                    # Calculate fees
-                                    entry_fee = entry_value * 0.001  # 0.1% entry fee
-                                    exit_fee = current_value * 0.001  # 0.1% exit fee
-                                    total_fees = entry_fee + exit_fee
-                                    
-                                    # Calculate net profit
-                                    net_profit = gross_profit - total_fees
-                                    net_profit_percentage = (net_profit / entry_value) * 100
-                                    
-                                    # Log the high turn point detection
-                                    logger.info(
-                                        f"High turn point detected for trade {trade['id']}:\n"
-                                        f"Price pattern: {prices}\n"
-                                        f"Price changes: {price_changes}\n"
-                                        f"Peak price: {highest_price} at index {highest_index}\n"
-                                        f"Average start price: {avg_start:.2f}\n"
-                                        f"Net profit: {net_profit_percentage:.2f}%"
-                                    )
-                                    
-                                    # If net profit is >= 10%, close the trade
-                                    if net_profit_percentage >= 1:
-                                        logger.info(f"Closing trade {trade['id']} at high turn point with {net_profit_percentage:.2f}% net profit")
-                                        await close_trade(trade["id"])
+                            if len(trade["price_history"]) >= 3:
+                                prices = trade["price_history"]
+                                # Simple peak detection: middle value is higher than neighbors
+                                if prices[-2] > prices[-3] and prices[-2] > prices[-1]:
+                                    # Only print if ROI has not reached take profit
+                                    if trade["roi"] < trade["take_profit"]:
+                                        logger.info(f"Peak detected for trade {trade['id']} at price {prices[-2]} (ROI: {trade['roi']}, Take Profit: {trade['take_profit']}) (history: {prices[-3]}, {prices[-2]}, {prices[-1]})")
                         
                         # Check for auto-close conditions
                         if trade["roi"] >= trade["take_profit"]:  # Take profit
                             await close_trade(trade["id"])
                         elif trade["roi"] <= -trade["stop_loss"]:  # Stop loss
                             await close_trade(trade["id"])
+                        
+                        # Broadcast update whenever price changes
+                        await broadcast_trade_update(trade)
                     
                     except Exception as e:
                         logger.error(f"Error monitoring trade {trade.get('id', 'unknown')}: {str(e)}")
@@ -924,10 +872,15 @@ async def _create_trade_logic(trade_request: TradeRequest):
             min_qty = float(lot_size_filter['minQty'])
             precision = len(str(step_size).rstrip('0').split('.')[-1])
             
-            # Round down to the nearest valid step size
-            quantity = math.floor(quantity / step_size) * step_size
+            # Round up to the nearest valid step size to ensure we use the full amount
+            quantity = math.ceil(quantity / step_size) * step_size
             formatted_quantity = format(quantity, f'.{precision}f')
             logger.info(f"Formatted quantity: {formatted_quantity} {symbol.replace('USDT', '')}")
+            
+            # Calculate actual amount that will be used
+            actual_amount = float(formatted_quantity) * current_price
+            if abs(actual_amount - amount_usdt) > 1.0:  # If difference is more than 1 USDT
+                logger.warning(f"Amount adjustment: Requested {amount_usdt} USDT, will use {actual_amount:.2f} USDT")
             
             # Validate minimum quantity
             if float(formatted_quantity) < min_qty:
@@ -1145,7 +1098,7 @@ async def close_trade(trade_id: str, user: str = Depends(require_auth)):
             raise HTTPException(status_code=400, detail=f"Unsupported coin: {trade['coin']}")
         
         # Get the base asset (e.g., BTC for BTCUSDT)
-        base_asset = symbol[:-4]  # Remove USDT
+        base_asset = symbol[:-4]
         
         try:
             # Get symbol info for quantity precision
@@ -1167,77 +1120,40 @@ async def close_trade(trade_id: str, user: str = Depends(require_auth)):
                     quantity_precision = len(str(step_size).rstrip('0').split('.')[-1])
                     break
 
-            # Function to get current balance
-            def get_current_balance():
-                account = binance_client.get_account()
-                for balance in account['balances']:
-                    if balance['asset'] == base_asset:
-                        return float(balance['free'])
-                return 0.0
-
-            # Function to execute sell order
-            async def execute_sell(quantity):
-                if quantity < min_qty:
-                    return None
-                formatted_quantity = format(quantity, f'.{quantity_precision}f')
-                logger.info(f"Attempting to sell {formatted_quantity} {base_asset}")
-                return await execute_binance_order(
-                    symbol=symbol,
-                    side='SELL',
-                    order_type='MARKET',
-                    quantity=float(formatted_quantity)
-                )
-
-            # Check if the available balance is below the minimum quantity right away
-            initial_balance = get_current_balance()
-            if initial_balance < min_qty:
-                logger.warning(f"Balance {initial_balance} {base_asset} is below minimum tradeable quantity {min_qty}. Nothing to sell.")
-                trade["status"] = "Closed"
-                trade["exit_time"] = format_datetime(datetime.now().isoformat())
-                trade["exit_price"] = trade["current_price"]
-                trade["exit_quantity"] = 0.0
-                metrics = calculate_trade_metrics(trade, trade["current_price"])
-                trade.update(metrics)
-                trade_history.append(trade)
-                active_trades.remove(trade)
-                save_trades()
-                await broadcast_trade_update(trade)
-                return {
-                    "status": "success",
-                    "message": "Trade closed (balance below minimum lot size)",
-                    "trade": trade
-                }
-
-            # Loop selling attempts until remaining balance is below min_qty or no further quantity can be sold
-            total_filled_quantity = 0.0
-            total_cost = 0.0
-
-            attempt = 0
-            max_attempts = 5  # safety guard to avoid infinite loops
-            while attempt < max_attempts:
-                current_balance = get_current_balance()
-                if current_balance < min_qty:
-                    logger.info(f"Remaining balance {current_balance} {base_asset} is below minimum {min_qty}, stopping sell attempts")
+            # Get current balance
+            account = binance_client.get_account()
+            coin_balance = None
+            for balance in account['balances']:
+                if balance['asset'] == base_asset:
+                    coin_balance = float(balance['free'])
                     break
 
-                quantity = math.floor(current_balance / step_size) * step_size
-                if quantity < min_qty:
-                    logger.info(f"Calculated quantity {quantity} is below min_qty after rounding, stopping sell attempts")
-                    break
+            if not coin_balance or coin_balance <= 0:
+                raise HTTPException(status_code=400, detail=f"No {base_asset} balance available")
 
-                order = await execute_sell(quantity)
-                if not order or 'fills' not in order or not order['fills']:
-                    logger.warning("Sell order returned no fills, stopping further attempts")
-                    break
+            # Use the trade's quantity directly
+            quantity_to_sell = float(trade["quantity"])
+            
+            # Format quantity according to step size
+            quantity_to_sell = math.floor(quantity_to_sell / step_size) * step_size
+            formatted_quantity = format(quantity_to_sell, f'.{quantity_precision}f')
+            
+            logger.info(f"Attempting to sell {formatted_quantity} {base_asset} from trade {trade_id}")
+            
+            # Execute the sell order
+            order = await execute_binance_order(
+                symbol=symbol,
+                side='SELL',
+                order_type='MARKET',
+                quantity=float(formatted_quantity)
+            )
+            
+            if not order or 'fills' not in order or not order['fills']:
+                raise HTTPException(status_code=400, detail="Failed to execute sell order")
 
-                filled_qty = sum(float(fill['qty']) for fill in order['fills'])
-                filled_cost = sum(float(fill['price']) * float(fill['qty']) for fill in order['fills'])
-
-                total_filled_quantity += filled_qty
-                total_cost += filled_cost
-
-                attempt += 1
-
+            # Calculate total filled quantity and cost
+            total_filled_quantity = sum(float(fill['qty']) for fill in order['fills'])
+            total_cost = sum(float(fill['price']) * float(fill['qty']) for fill in order['fills'])
             exit_price = total_cost / total_filled_quantity if total_filled_quantity > 0 else 0
 
             # Update trade data

@@ -14,4 +14,4 @@ TAKE_PROFIT_PERCENTAGE = 10  # 10% take profit
 STOP_LOSS_PERCENTAGE = 5  # 5% stop loss 
 
 # Price Fetching Configuration
-PRICE_FETCH_DELAY = 0.5  # Delay between price fetches in seconds 
+PRICE_FETCH_DELAY = 0.2  # Delay between price fetches in seconds 
