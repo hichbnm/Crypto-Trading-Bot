@@ -562,12 +562,24 @@ function updateActiveTradesTable(trades) {
     
     // Update the map and table
     activeTradesMap.clear();
-    trades.forEach(trade => {
-        if (isValidTrade(trade)) {
-            activeTradesMap.set(trade.id, trade);
-            addTradeToTable(trade);
-        }
-    });
+    
+    if (!trades || trades.length === 0) {
+        // Add "No active trades" message
+        const noTradesRow = document.createElement('tr');
+        noTradesRow.innerHTML = `
+            <td colspan="11" style="text-align: center; padding: 20px; color: #666; font-style: italic;">
+                No active trades to display
+            </td>
+        `;
+        tbody.appendChild(noTradesRow);
+    } else {
+        trades.forEach(trade => {
+            if (isValidTrade(trade)) {
+                activeTradesMap.set(trade.id, trade);
+                addTradeToTable(trade);
+            }
+        });
+    }
     
     updateActiveTradesCount();
     updateTotalPL();
@@ -579,6 +591,12 @@ function addTradeToTable(trade) {
 
     const tbody = document.getElementById('active-trades');
     if (!tbody) return;
+
+    // Remove "No active trades" message if it exists
+    const noTradesRow = tbody.querySelector('tr td[colspan="11"]');
+    if (noTradesRow) {
+        noTradesRow.parentElement.remove();
+    }
 
     const row = document.createElement('tr');
     row.setAttribute('data-trade-id', trade.id);
