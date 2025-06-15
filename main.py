@@ -686,33 +686,49 @@ async def lifespan(app: FastAPI):
                             metrics = calculate_trade_metrics(trade, current_price)
                             trade.update(metrics)
                             
-                            # Enhanced high turn point detection with 7-price window
-                            if len(trade["price_history"]) >= 3:
-                                prices = trade["price_history"]
-                                # Simple peak detection: middle value is higher than neighbors
-                                if prices[-2] > prices[-3] and prices[-2] > prices[-1]:
-                                    # Only print if ROI has not reached take profit
-                                    if trade["roi"] < trade["take_profit"]:
-                                        logger.info(f"Peak detected for trade {trade['id']} at price {prices[-2]} (ROI: {trade['roi']}, Take Profit: {trade['take_profit']}) (history: {prices[-3]}, {prices[-2]}, {prices[-1]})")
-                        
-                        # Check for auto-close conditions
-                        if trade["roi"] >= trade["take_profit"]:  # Take profit
-                            await close_trade(trade["id"])
-                        elif trade["roi"] <= -trade["stop_loss"]:  # Stop loss
-                            await close_trade(trade["id"])
-                        
-                        # Broadcast update whenever price changes
-                        await broadcast_trade_update(trade)
-                    
+                            # Calculate RSI
+                            symbol = SYMBOL_MAPPING.get(trade["coin"].lower())
+                            if symbol:
+                                klines = binance_client.get_klines(
+                                    symbol=symbol,
+                                    interval=Client.KLINE_INTERVAL_1HOUR,
+                                    limit=100
+                                )
+                                prices = [float(k[4]) for k in klines]
+                                current_rsi = calculate_rsi(prices)
+                                trade["current_rsi"] = current_rsi
+                                
+                                # Enhanced high turn point detection with 7-price window
+                                should_sell = False
+                                sell_reason = ""
+                                
+                                if trade["roi"] >= trade["take_profit"]:
+                                    should_sell = True
+                                    sell_reason = "Take Profit"
+                                elif trade["roi"] <= -trade["stop_loss"]:
+                                    should_sell = True
+                                    sell_reason = "Stop Loss"
+                                elif current_rsi > RSI_OVERBOUGHT:
+                                    should_sell = True
+                                    sell_reason = "RSI Overbought"
+                                
+                                if should_sell:
+                                    logger.info(f"Selling {symbol} due to {sell_reason} (RSI: {current_rsi:.2f}, ROI: {trade['roi']:.2f}%)")
+                                    await close_trade(trade["id"])
+                                    continue
+                                
+                                # Broadcast update whenever price changes
+                                await broadcast_trade_update(trade)
+                                
                     except Exception as e:
                         logger.error(f"Error monitoring trade {trade.get('id', 'unknown')}: {str(e)}")
                         continue
                 
-                await asyncio.sleep(1)  # Check every second
+                await asyncio.sleep(1) # Check every second
                 
             except Exception as e:
                 logger.error(f"Error in monitor_trades: {str(e)}")
-                await asyncio.sleep(5)  # Wait longer on error
+                await asyncio.sleep(1)  # Wait longer on error
 
     # Start monitoring task
     asyncio.create_task(monitor_trades())
