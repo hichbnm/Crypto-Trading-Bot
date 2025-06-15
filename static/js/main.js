@@ -757,4 +757,83 @@ document.addEventListener('DOMContentLoaded', function() {
             ws.close();
         }
     });
-}); 
+});
+
+// Add this function after the existing functions
+async function placeAutoBuyOrder() {
+    const form = document.getElementById('tradeForm');
+    const submitButton = document.getElementById('autoBuyBtn');
+    const errorContainer = document.getElementById('error-container');
+    
+    if (!form) {
+        console.error('Trade form not found');
+        return;
+    }
+    
+    // Show loading state
+    submitButton.disabled = true;
+    submitButton.textContent = 'Checking RSI...';
+    
+    try {
+        // Get form data
+        const formData = new FormData(form);
+        const tradeData = {
+            coin: formData.get('coin'),
+            amount: parseFloat(formData.get('amount')),
+            order_type: 'market', // Always use market order for auto-buy
+            take_profit: parseFloat(formData.get('take_profit')),
+            stop_loss: parseFloat(formData.get('stop_loss'))
+        };
+        
+        // Validate amount
+        if (isNaN(tradeData.amount) || tradeData.amount <= 0) {
+            throw new Error('Please enter a valid amount greater than 0');
+        }
+        
+        // Clear previous error messages
+        if (errorContainer) {
+            errorContainer.innerHTML = '';
+        }
+        
+        // Send request to auto-buy endpoint
+        const response = await fetch('/auto-buy', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(tradeData)
+        });
+        
+        const data = await response.json();
+        
+        if (!response.ok) {
+            throw new Error(data.detail || 'Auto-buy failed. Please try again.');
+        }
+        
+        // Show success message
+        if (errorContainer) {
+            const successMessage = document.createElement('div');
+            successMessage.className = 'success-message';
+            successMessage.textContent = data.message || 'Trade created successfully!';
+            errorContainer.appendChild(successMessage);
+            
+            // Remove success message after 3 seconds
+            setTimeout(() => {
+                successMessage.remove();
+            }, 3000);
+        }
+        
+    } catch (error) {
+        console.error('Error in auto-buy:', error);
+        if (errorContainer) {
+            const errorMessage = document.createElement('div');
+            errorMessage.className = 'error-message';
+            errorMessage.textContent = error.message;
+            errorContainer.appendChild(errorMessage);
+        }
+    } finally {
+        // Reset button state
+        submitButton.disabled = false;
+        submitButton.textContent = 'Auto Buy (RSI)';
+    }
+} 

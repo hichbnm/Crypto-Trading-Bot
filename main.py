@@ -28,10 +28,37 @@ from config import (
 import math
 import secrets
 from starlette.middleware.sessions import SessionMiddleware
+import numpy as np
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Add these constants near the top of main.py, after the other constants
+RSI_PERIOD = 14
+RSI_OVERSOLD = 30
+RSI_OVERBOUGHT = 70
+
+def get_server_time():
+    """Get the current server time from Binance"""
+    try:
+        response = requests.get('https://api.binance.com/api/v3/time')
+        if response.status_code == 200:
+            return response.json()['serverTime']
+        return None
+    except Exception as e:
+        logger.error(f"Error getting server time: {str(e)}")
+        return None
+
+def sync_time():
+    """Synchronize local time with Binance server time"""
+    server_time = get_server_time()
+    if server_time:
+        local_time = int(time.time() * 1000)
+        time_diff = server_time - local_time
+        logger.info(f"Time difference with Binance server: {time_diff}ms")
+        return time_diff
+    return 0
 
 # Add session middleware secret key
 SECRET_KEY = secrets.token_hex(32)
@@ -232,7 +259,17 @@ TRADES_FILE = "trades.json"
 try:
     if not BINANCE_API_KEY or not BINANCE_API_SECRET:
         raise ValueError("Binance API credentials are not configured")
+    
+    # Initialize client
     binance_client = Client(BINANCE_API_KEY, BINANCE_API_SECRET)
+    
+    # Synchronize time with Binance server
+    time_diff = sync_time()
+    if time_diff != 0:
+        logger.info(f"Adjusting for time difference of {time_diff}ms")
+        # Set the time offset in the client's request handler
+        binance_client.timestamp_offset = time_diff
+    
     # Test the connection
     binance_client.get_account()
     logger.info("Successfully connected to Binance API")
@@ -629,7 +666,6 @@ async def lifespan(app: FastAPI):
                         
                         # Add current price to history (keep last 20 prices for better pattern recognition)
                         trade["price_history"].append(current_price)
-                        logger.info(f"Added price {current_price} to price_history for trade {trade['id']}: {trade['price_history']}")
                         if len(trade["price_history"]) > 20:
                             trade["price_history"] = trade["price_history"][-20:]
                         
@@ -680,6 +716,7 @@ async def lifespan(app: FastAPI):
 
     # Start monitoring task
     asyncio.create_task(monitor_trades())
+    asyncio.create_task(monitor_pending_orders())
     yield
 
 # Initialize FastAPI app with lifespan
@@ -1220,21 +1257,28 @@ async def decline_trade(trade_id: str, user: str = Depends(require_auth)):
         if not symbol:
             raise HTTPException(status_code=400, detail=f"Unsupported coin: {trade['coin']}")
         
-        try:
-            # Cancel the order on Binance
-            binance_client.cancel_order(
-                symbol=symbol,
-                orderId=trade["binance_order_id"]
-            )
-            logger.info(f"Successfully canceled Binance order {trade['binance_order_id']} for trade {trade_id}")
-        except BinanceAPIException as e:
-            if e.code == -2011:  # Order does not exist
-                logger.warning(f"Order {trade['binance_order_id']} already canceled or filled")
-            else:
-                raise HTTPException(status_code=500, detail=f"Error canceling Binance order: {str(e)}")
-        
-        # Remove from active trades
-        active_trades.remove(trade)
+        # If it's an auto-buy order (has rsi_trigger)
+        if trade.get("rsi_trigger") is not None:
+            logger.info(f"Declining auto-buy order {trade_id} for {symbol}")
+            # Just remove from active trades since no Binance order exists yet
+            active_trades.remove(trade)
+        else:
+            # For regular limit orders, try to cancel on Binance
+            try:
+                if trade["binance_order_id"]:
+                    binance_client.cancel_order(
+                        symbol=symbol,
+                        orderId=trade["binance_order_id"]
+                    )
+                    logger.info(f"Successfully canceled Binance order {trade['binance_order_id']} for trade {trade_id}")
+            except BinanceAPIException as e:
+                if e.code == -2011:  # Order does not exist
+                    logger.warning(f"Order {trade['binance_order_id']} already canceled or filled")
+                else:
+                    raise HTTPException(status_code=500, detail=f"Error canceling Binance order: {str(e)}")
+            
+            # Remove from active trades
+            active_trades.remove(trade)
         
         # Save trades to file
         save_trades()
@@ -1242,7 +1286,11 @@ async def decline_trade(trade_id: str, user: str = Depends(require_auth)):
         # Broadcast update
         await broadcast_trade_update(trade)
         
-        return {"status": "success", "message": "Trade declined successfully"}
+        return {
+            "status": "success", 
+            "message": "Trade declined successfully",
+            "trade_id": trade_id
+        }
         
     except Exception as e:
         logger.error(f"Error declining trade: {str(e)}")
@@ -1324,6 +1372,262 @@ async def logout(response: Response):
     response = RedirectResponse(url="/login", status_code=302)
     response.delete_cookie("session_id")
     return response
+
+def calculate_rsi(prices: List[float], period: int = 14) -> float:
+    """Calculate RSI (Relative Strength Index) for a list of prices."""
+    if len(prices) < period + 1:
+        return 50.0  # Return neutral RSI if not enough data
+        
+    # Calculate price changes
+    deltas = np.diff(prices)
+    
+    # Separate gains and losses
+    gains = np.where(deltas > 0, deltas, 0)
+    losses = np.where(deltas < 0, -deltas, 0)
+    
+    # Calculate average gains and losses
+    avg_gain = np.mean(gains[:period])
+    avg_loss = np.mean(losses[:period])
+    
+    # Calculate subsequent values
+    for i in range(period, len(deltas)):
+        avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+        avg_loss = (avg_loss * (period - 1) + losses[i]) / period
+    
+    # Calculate RS and RSI
+    if avg_loss == 0:
+        return 100.0
+    rs = avg_gain / avg_loss
+    rsi = 100 - (100 / (1 + rs))
+    
+    return float(rsi)
+
+def print_rsi_status(symbol: str, rsi: float, is_oversold: bool = False):
+    """Print RSI status in a clear, visible format."""
+    print("\n" + "="*50)
+    print(f"RSI Status for {symbol}")
+    print("="*50)
+    print(f"Current RSI: {rsi:.2f}")
+    if is_oversold:
+        print("Status: OVERSOLD - Ready to execute order!")
+    else:
+        print("Status: Waiting for oversold condition")
+    print("="*50 + "\n")
+
+@app.post("/auto-buy")
+async def auto_buy(trade_request: TradeRequest, user: str = Depends(require_auth)):
+    """Create a trade based on RSI indicator."""
+    try:
+        # Get price history for RSI calculation
+        symbol = SYMBOL_MAPPING.get(trade_request.coin.lower())
+        if not symbol:
+            raise HTTPException(status_code=400, detail=f"Unsupported coin: {trade_request.coin}")
+            
+        logger.info(f"Starting auto-buy process for {symbol}")
+        
+        # Check USDT balance first
+        try:
+            usdt_balance = await get_binance_balance('USDT')
+            logger.info(f"Current USDT balance: {usdt_balance}")
+            
+            if usdt_balance < float(trade_request.amount):
+                raise HTTPException(
+                    status_code=400, 
+                    detail=f"Insufficient USDT balance. Required: {float(trade_request.amount):.2f} USDT, Available: {usdt_balance:.2f} USDT"
+                )
+        except Exception as e:
+            logger.error(f"Error checking USDT balance: {str(e)}")
+            raise HTTPException(status_code=400, detail=f"An issue occurred while verifying your USDT balance. Please try again.")
+            
+        # Get klines (candlestick data) from Binance
+        try:
+            klines = binance_client.get_klines(
+                symbol=symbol,
+                interval=Client.KLINE_INTERVAL_1HOUR,
+                limit=100  # Get last 100 candles for better RSI calculation
+            )
+            logger.info(f"Successfully retrieved {len(klines)} klines for {symbol}")
+        except Exception as e:
+            logger.error(f"Error getting klines for {symbol}: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error getting price history: {str(e)}")
+        
+        # Extract closing prices
+        try:
+            prices = [float(k[4]) for k in klines]  # Index 4 is the closing price
+            logger.info(f"Extracted {len(prices)} closing prices for {symbol}")
+        except Exception as e:
+            logger.error(f"Error extracting closing prices: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error processing price data: {str(e)}")
+        
+        # Calculate RSI
+        try:
+            rsi = calculate_rsi(prices)
+            logger.info(f"Current RSI for {symbol}: {rsi}")
+        except Exception as e:
+            logger.error(f"Error calculating RSI: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error calculating RSI: {str(e)}")
+        
+        # Get current price
+        try:
+            ticker = binance_client.get_symbol_ticker(symbol=symbol)
+            current_price = float(ticker['price'])
+            logger.info(f"Current price for {symbol}: {current_price}")
+        except Exception as e:
+            logger.error(f"Error getting current price: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Error getting current price: {str(e)}")
+        
+        # Calculate quantity based on USDT amount
+        quantity = float(trade_request.amount) / current_price
+        
+        # Get symbol precision and format quantity
+        try:
+            exchange_info = binance_client.get_exchange_info()
+            symbol_info = next((s for s in exchange_info['symbols'] if s['symbol'] == symbol), None)
+            if not symbol_info:
+                raise HTTPException(status_code=400, detail=f"Could not get exchange info for {symbol}")
+            
+            # Get LOT_SIZE filter
+            lot_size_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'LOT_SIZE'), None)
+            if not lot_size_filter:
+                raise HTTPException(status_code=400, detail=f"Could not get LOT_SIZE filter for {symbol}")
+            
+            step_size = float(lot_size_filter['stepSize'])
+            min_qty = float(lot_size_filter['minQty'])
+            precision = len(str(step_size).rstrip('0').split('.')[-1])
+            
+            # Round up to the nearest valid step size
+            quantity = math.ceil(quantity / step_size) * step_size
+            formatted_quantity = format(quantity, f'.{precision}f')
+            
+            # Validate minimum quantity
+            if float(formatted_quantity) < min_qty:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Calculated quantity {formatted_quantity} is below minimum {min_qty} for {symbol}"
+                )
+                
+            # Calculate actual amount that will be used
+            actual_amount = float(formatted_quantity) * current_price
+            if actual_amount > usdt_balance:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Adjusted amount {actual_amount:.2f} USDT exceeds available balance {usdt_balance:.2f} USDT"
+                )
+                
+        except Exception as e:
+            logger.error(f"Error formatting quantity: {str(e)}")
+            raise HTTPException(status_code=400, detail=f"Error formatting quantity: {str(e)}")
+        
+        # Create trade data without executing any orders
+        trade = {
+            "id": str(uuid.uuid4()),
+            "coin": trade_request.coin,
+            "amount_usdt": float(trade_request.amount),
+            "quantity": float(formatted_quantity),
+            "order_type": "market",  # Will be executed as market order when RSI < 30
+            "entry_price": current_price,
+            "current_price": current_price,
+            "status": "Pending",
+            "limit_price": None,  # No limit price needed
+            "entry_time": format_datetime(datetime.now().isoformat()),
+            "profit_loss": 0.0,
+            "fees": 0.0,
+            "roi": 0.0,
+            "binance_order_id": None,  # Will be set when order is executed
+            "take_profit": trade_request.take_profit if trade_request.take_profit is not None else TAKE_PROFIT_PERCENTAGE,
+            "stop_loss": trade_request.stop_loss if trade_request.stop_loss is not None else STOP_LOSS_PERCENTAGE,
+            "rsi_trigger": RSI_OVERSOLD,
+            "current_rsi": rsi
+        }
+        
+        # Add to active trades
+        active_trades.append(trade)
+        
+        # Save trades to file
+        save_trades()
+        
+        # Broadcast trade update
+        await broadcast_trade_update(trade)
+        
+        return {
+            "status": "success",
+            "message": f"Pending order created. Will execute when RSI < 30 (Current RSI: {rsi:.2f})",
+            "trade": trade
+        }
+            
+    except HTTPException as e:
+        # Re-raise HTTP exceptions as they already have proper status codes
+        raise e
+    except Exception as e:
+        logger.error(f"Unexpected error in auto-buy: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+
+# Add this function to monitor and execute pending orders
+async def monitor_pending_orders():
+    """Monitor pending orders and execute them when RSI conditions are met."""
+    while True:
+        try:
+            for trade in active_trades:
+                if trade["status"] == "Pending" and trade.get("rsi_trigger") is not None:
+                    # Get current RSI
+                    symbol = SYMBOL_MAPPING.get(trade["coin"].lower())
+                    if not symbol:
+                        continue
+                        
+                    klines = binance_client.get_klines(
+                        symbol=symbol,
+                        interval=Client.KLINE_INTERVAL_1HOUR,
+                        limit=100
+                    )
+                    prices = [float(k[4]) for k in klines]
+                    current_rsi = calculate_rsi(prices)
+                    
+                    # Update current RSI in trade data
+                    trade["current_rsi"] = current_rsi
+                    
+                    # Print RSI status to console
+                    print_rsi_status(symbol, current_rsi, current_rsi < trade["rsi_trigger"])
+                    
+                    # If RSI is below trigger, execute the order
+                    if current_rsi < trade["rsi_trigger"]:
+                        try:
+                            # Execute market order
+                            order = await execute_binance_order(
+                                symbol=symbol,
+                                side='BUY',
+                                order_type='MARKET',
+                                quantity=trade["quantity"]
+                            )
+                            
+                            # Update trade with order details
+                            trade["status"] = "Open"
+                            trade["binance_order_id"] = order['orderId']
+                            trade["entry_price"] = float(order['fills'][0]['price'])
+                            trade["fees"] = sum(float(fill['commission']) for fill in order['fills'])
+                            
+                            # Save updated trades
+                            save_trades()
+                            
+                            # Broadcast update
+                            await broadcast_trade_update(trade)
+                            
+                            logger.info(f"Executed pending order for {symbol} at RSI {current_rsi:.2f}")
+                            
+                        except Exception as e:
+                            logger.error(f"Error executing pending order: {str(e)}")
+                            
+        except Exception as e:
+            logger.error(f"Error in monitor_pending_orders: {str(e)}")
+            
+        # Wait before next check
+        await asyncio.sleep(60)  # Check every minute
+
+@app.on_event("startup")
+async def startup_event():
+    """Start background tasks on application startup."""
+    asyncio.create_task(monitor_trades())
+    asyncio.create_task(monitor_pending_orders())
+    logger.info("Background tasks started")
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
