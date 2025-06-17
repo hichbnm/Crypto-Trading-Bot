@@ -36,8 +36,8 @@ logger = logging.getLogger(__name__)
 
 # Add these constants near the top of main.py, after the other constants
 RSI_PERIOD = 14
-RSI_OVERSOLD = 30
-RSI_OVERBOUGHT = 70
+RSI_OVERSOLD = 45
+RSI_OVERBOUGHT = 60
 
 def get_server_time():
     """Get the current server time from Binance"""
@@ -718,7 +718,7 @@ async def lifespan(app: FastAPI):
                                     continue
                                 
                                 # Broadcast update whenever price changes
-                                await broadcast_trade_update(trade)
+                        await broadcast_trade_update(trade)
                                 
                     except Exception as e:
                         logger.error(f"Error monitoring trade {trade.get('id', 'unknown')}: {str(e)}")
@@ -1073,11 +1073,7 @@ async def _create_trade_logic(trade_request: TradeRequest):
         # Broadcast the new trade immediately
         await broadcast_trade_update(trade)
         
-        return {
-            "status": "success",
-            "message": "Trade created successfully",
-            "trade": trade
-        }
+        return trade
         
     except HTTPException as e:
         logger.error(f"Error creating trade: {str(e)}")
@@ -1090,8 +1086,13 @@ async def _create_trade_logic(trade_request: TradeRequest):
 async def create_trade(trade_request: TradeRequest, user: str = Depends(require_auth)):
     """Create a new trade."""
     try:
-        response = await _create_trade_logic(trade_request)
-        return response
+        trade = await _create_trade_logic(trade_request)
+        await broadcast_trade_update(trade)
+        return {
+            "status": "success",
+            "message": "Trade created successfully",
+            "trade": trade
+        }
     except HTTPException as e:
         raise e
     except Exception as e:
@@ -1474,7 +1475,7 @@ async def auto_buy(trade_request: TradeRequest, user: str = Depends(require_auth
                 interval=Client.KLINE_INTERVAL_1HOUR,
                 limit=100  # Get last 100 candles for better RSI calculation
             )
-            logger.info(f"Successfully retrieved {len(klines)} klines for {symbol}")
+            logger.info(f"Monitor: Successfully retrieved {len(klines)} klines for {symbol}. First 5 klines: {klines[:5]}")
         except Exception as e:
             logger.error(f"Error getting klines for {symbol}: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Error getting price history: {str(e)}")
@@ -1482,7 +1483,7 @@ async def auto_buy(trade_request: TradeRequest, user: str = Depends(require_auth
         # Extract closing prices
         try:
             prices = [float(k[4]) for k in klines]  # Index 4 is the closing price
-            logger.info(f"Extracted {len(prices)} closing prices for {symbol}")
+            logger.info(f"Monitor: Extracted {len(prices)} closing prices for {symbol}. First 5 prices: {prices[:5]}")
         except Exception as e:
             logger.error(f"Error extracting closing prices: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Error processing price data: {str(e)}")
@@ -1490,7 +1491,7 @@ async def auto_buy(trade_request: TradeRequest, user: str = Depends(require_auth
         # Calculate RSI
         try:
             rsi = calculate_rsi(prices)
-            logger.info(f"Current RSI for {symbol}: {rsi}")
+            logger.info(f"Monitor: Calculated RSI for {symbol}: {rsi:.2f}")
         except Exception as e:
             logger.error(f"Error calculating RSI: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Error calculating RSI: {str(e)}")
@@ -1607,8 +1608,13 @@ async def monitor_pending_orders():
                         interval=Client.KLINE_INTERVAL_1HOUR,
                         limit=100
                     )
+                    logger.info(f"Monitor: Successfully retrieved {len(klines)} klines for {symbol}. First 5 klines: {klines[:5]}")
+
                     prices = [float(k[4]) for k in klines]
+                    logger.info(f"Monitor: Extracted {len(prices)} closing prices for {symbol}. First 5 prices: {prices[:5]}")
+
                     current_rsi = calculate_rsi(prices)
+                    logger.info(f"Monitor: Calculated RSI for {symbol}: {current_rsi:.2f}")
                     
                     # Update current RSI in trade data
                     trade["current_rsi"] = current_rsi

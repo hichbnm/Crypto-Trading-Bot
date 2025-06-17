@@ -683,13 +683,13 @@
                             {% for trade in trade_history %}
                             <tr>
                                 <td>{{ trade.coin }}</td>
-                                <td>{{ "%.2f"|format(trade.amount_usdt) }}</td>
-                                <td>{{ "%.2f"|format(trade.entry_price) }}</td>
-                                <td>{{ "%.2f"|format(trade.exit_price) if trade.exit_price else "N/A" }}</td>
+                                <td>${{ "%.2f"|format(trade.amount_usdt) }}</td>
+                                <td>${{ "%.2f"|format(trade.entry_price) }}</td>
+                                <td>{% if trade.exit_price %}${{ "%.2f"|format(trade.exit_price) }}{% else %}N/A{% endif %}</td>
                                 <td class="profit-loss {{ 'positive' if trade.profit_loss >= 0 else 'negative' }}">
-                                    {{ "%.2f"|format(trade.profit_loss) }}
+                                    ${{ "%.2f"|format(trade.profit_loss) }}
                                 </td>
-                                <td>{{ "%.2f"|format(trade.fees) }}</td>
+                                <td>${{ "%.2f"|format(trade.fees) }}</td>
                                 <td>{{ trade.status }}</td>
                                 <td>{{ trade.entry_time }}</td>
                             </tr>

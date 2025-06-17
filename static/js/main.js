@@ -66,13 +66,17 @@ const maxReconnectAttempts = 5;
 const reconnectDelay = 3000; // 3 seconds
 const activeTradesMap = new Map(); // Keep track of active trades
 
+// Global variables for Stop Loss elements
+let enableStopLossCheckbox;
+let stopLossInput;
+
 // DOM Elements
 const connectionStatus = document.getElementById('connection-status');
 const activeTradesCount = document.getElementById('active-trades-count');
 const totalPL = document.getElementById('total-pl');
 const activePL = document.getElementById('active-pl');
 const historyPL = document.getElementById('history-pl');
-const tradeForm = document.getElementById('trade-form');
+const tradeForm = document.getElementById('tradeForm'); // Corrected ID from 'trade-form'
 const tradeTable = document.querySelector('table tbody');
 
 // Utility Functions
@@ -119,11 +123,11 @@ function updateTotalPL() {
     let historyTotal = 0;
     
     // Calculate active trades P/L
-    const activeRows = document.querySelectorAll('#tradesTableBody tr');
+    const activeRows = document.querySelectorAll('#active-trades tr');
     activeRows.forEach(row => {
         const plCell = row.querySelector('.profit-loss');
         if (plCell) {
-            activeTotal += parseFloat(plCell.textContent) || 0;
+            activeTotal += parseFloat(plCell.textContent.replace(/[^0-9.-]+/g, '')) || 0;
         }
     });
     
@@ -132,7 +136,7 @@ function updateTotalPL() {
     historyRows.forEach(row => {
         const plCell = row.querySelector('.profit-loss');
         if (plCell) {
-            historyTotal += parseFloat(plCell.textContent) || 0;
+            historyTotal += parseFloat(plCell.textContent.replace(/[^0-9.-]+/g, '')) || 0;
         }
     });
     
@@ -399,7 +403,6 @@ function handleTradeSubmit(event) {
     submitButton.textContent = 'Processing...';
     
     const formData = new FormData(form);
-    const enableStopLossCheckbox = document.getElementById('enable_stop_loss');
     
     const tradeData = {
         coin: formData.get('coin'),
@@ -463,7 +466,7 @@ function handleTradeSubmit(event) {
             form.reset();
             document.getElementById('limit_price_container').style.display = 'none';
             // Reset stop loss toggle and input
-            if (enableStopLossCheckbox) {
+            if (enableStopLossCheckbox && stopLossInput) { // Ensure elements exist before trying to reset
                 enableStopLossCheckbox.checked = false;  // Keep it unchecked by default
                 stopLossInput.disabled = true;  // Keep it disabled by default
                 stopLossInput.value = '';  // Clear the value
@@ -553,6 +556,7 @@ function isValidTrade(trade) {
            trade.status &&
            trade.amount_usdt !== undefined &&  // Make sure amount exists
            trade.entry_price !== undefined;    // Make sure entry price exists
+    // Note: stop_loss is not required
 }
 
 // Function to update the active trades table
@@ -582,6 +586,7 @@ function updateActiveTradesTable(trades) {
             // Add to table if it passes validation
             if (isValidTrade(trade)) {
                 addTradeToTable(trade);
+                console.log("Adding trade to table:", trade);
             }
         });
     }
@@ -592,6 +597,7 @@ function updateActiveTradesTable(trades) {
 
 // Function to add a single trade to the table
 function addTradeToTable(trade) {
+    console.log("Adding trade to table:", trade);
     if (!isValidTrade(trade)) return;
 
     const tbody = document.getElementById('active-trades');
@@ -628,13 +634,13 @@ function addTradeToTable(trade) {
 
     row.innerHTML = `
         <td class="coin">${trade.coin}</td>
-        <td class="amount">${formatNumber(trade.amount_usdt)} USDT</td>
-        <td class="entry-price">${formatNumber(trade.entry_price)}</td>
-        <td class="current-price">${formatNumber(trade.current_price)}</td>
+        <td class="amount">$${formatNumber(trade.amount_usdt)} USDT</td>
+        <td class="entry-price">$${formatNumber(trade.entry_price)}</td>
+        <td class="current-price">$${formatNumber(trade.current_price)}</td>
         <td class="profit-loss ${parseFloat(trade.profit_loss || 0) >= 0 ? 'positive' : 'negative'}">
-            ${formatNumber(trade.profit_loss)}
+            $${formatNumber(trade.profit_loss)}
         </td>
-        <td class="fees">${formatNumber(trade.fees)}</td>
+        <td class="fees">$${formatNumber(trade.fees)}</td>
         <td class="take-profit">${takeProfitDisplay}</td>
         <td class="stop-loss">${stopLossDisplay}</td>
         <td class="roi ${parseFloat(trade.roi || 0) > 0 ? 'profit' : 'loss'}">${formatNumber(trade.roi)}%</td>
@@ -719,9 +725,25 @@ document.addEventListener('DOMContentLoaded', function() {
     // Initialize WebSocket connection
     connectWebSocket();
     
+    // Get Stop Loss elements and set initial state
+    enableStopLossCheckbox = document.getElementById('enable_stop_loss');
+    stopLossInput = document.getElementById('stop_loss');
+
+    if (enableStopLossCheckbox && stopLossInput) {
+        // Set initial state
+        stopLossInput.disabled = !enableStopLossCheckbox.checked;
+
+        enableStopLossCheckbox.addEventListener('change', function() {
+            stopLossInput.disabled = !this.checked;
+            if (!this.checked) {
+                stopLossInput.value = ''; // Clear value when disabled
+            }
+        });
+    }
+
     // Add form submit handler
-    const tradeForm = document.getElementById('tradeForm');
-    tradeForm.addEventListener('submit', handleTradeSubmit);
+    const tradeFormElement = document.getElementById('tradeForm'); // Use a new const for local scope
+    tradeFormElement.addEventListener('submit', handleTradeSubmit);
     
     // Add order type change handler
     const orderTypeSelect = document.getElementById('order_type');
@@ -750,22 +772,6 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
-    // Stop Loss Toggle
-    const enableStopLossCheckbox = document.getElementById('enable_stop_loss');
-    const stopLossInput = document.getElementById('stop_loss');
-
-    if (enableStopLossCheckbox && stopLossInput) {
-        // Set initial state
-        stopLossInput.disabled = !enableStopLossCheckbox.checked;
-
-        enableStopLossCheckbox.addEventListener('change', function() {
-            stopLossInput.disabled = !this.checked;
-            if (!this.checked) {
-                stopLossInput.value = ''; // Clear value when disabled
-            }
-        });
-    }
-
     // Remove amount input restrictions
     const amountInput = document.getElementById('amount');
     if (amountInput) {
@@ -812,10 +818,11 @@ async function placeAutoBuyOrder() {
         const tradeData = {
             coin: formData.get('coin'),
             amount: parseFloat(formData.get('amount')),
-            order_type: 'market', // Always use market order for auto-buy
+            order_type: formData.get('order_type'),
+            limit_price: formData.get('order_type') === 'limit' ? parseFloat(formData.get('limit_price')) : null,
             take_profit: parseFloat(formData.get('take_profit')),
             take_profit_type: formData.get('take_profit_type'),
-            stop_loss: parseFloat(formData.get('stop_loss'))
+            stop_loss: enableStopLossCheckbox.checked ? parseFloat(formData.get('stop_loss')) : null // This is correct
         };
         
         // Validate amount
