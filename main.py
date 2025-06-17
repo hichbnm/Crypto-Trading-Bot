@@ -1554,7 +1554,7 @@ async def auto_buy(trade_request: TradeRequest, user: str = Depends(require_auth
             "amount_usdt": float(trade_request.amount),
             "quantity": float(formatted_quantity),
             "order_type": trade_request.order_type,
-            "entry_price": current_price,
+            "entry_price": None,
             "current_price": current_price,
             "status": "Pending",
             "limit_price": None,  # No limit price needed
@@ -1637,6 +1637,7 @@ async def monitor_pending_orders():
                             trade["status"] = "Open"
                             trade["binance_order_id"] = order['orderId']
                             trade["entry_price"] = float(order['fills'][0]['price'])
+                            trade["current_price"] = float(order['fills'][0]['price']) # Set current price to entry price on execution
                             trade["fees"] = sum(float(fill['commission']) for fill in order['fills'])
                             
                             # Save updated trades

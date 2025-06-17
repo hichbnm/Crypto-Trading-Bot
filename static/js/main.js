@@ -255,7 +255,7 @@ function updateTradeData(trade) {
         newRow.innerHTML = `
             <td class="coin">${trade.coin}</td>
             <td class="amount">${parseFloat(trade.amount_usdt).toFixed(2)} USDT</td>
-            <td class="entry-price">${parseFloat(trade.entry_price).toFixed(2)}</td>
+            <td class="entry-price">${trade.status === "Pending" ? 'N/A' : `$${parseFloat(trade.entry_price).toFixed(2)}`}</td>
             <td class="current-price">${parseFloat(trade.current_price).toFixed(2)}</td>
             <td class="profit-loss ${parseFloat(trade.profit_loss) >= 0 ? 'positive' : 'negative'}">${parseFloat(trade.profit_loss).toFixed(2)}</td>
             <td class="fees">${parseFloat(trade.fees).toFixed(2)}</td>
@@ -635,7 +635,7 @@ function addTradeToTable(trade) {
     row.innerHTML = `
         <td class="coin">${trade.coin}</td>
         <td class="amount">$${formatNumber(trade.amount_usdt)} USDT</td>
-        <td class="entry-price">$${formatNumber(trade.entry_price)}</td>
+        <td class="entry-price">${trade.status === "Pending" ? 'N/A' : `$${formatNumber(trade.entry_price)}`}</td>
         <td class="current-price">$${formatNumber(trade.current_price)}</td>
         <td class="profit-loss ${parseFloat(trade.profit_loss || 0) >= 0 ? 'positive' : 'negative'}">
             $${formatNumber(trade.profit_loss)}
