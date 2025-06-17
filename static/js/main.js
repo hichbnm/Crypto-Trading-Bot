@@ -328,23 +328,21 @@ function connectWebSocket() {
                 
                 // Update P/L and ROI for each trade
                 data.trades.forEach(trade => {
-                    if (isValidTrade(trade)) {
-                        const row = document.querySelector(`#active-trades tr[data-trade-id="${trade.id}"]`);
-                        if (row) {
-                            // Update P/L
-                            const plCell = row.querySelector('.profit-loss');
-                            plCell.textContent = parseFloat(trade.profit_loss).toFixed(2);
-                            plCell.className = `profit-loss ${parseFloat(trade.profit_loss) >= 0 ? 'positive' : 'negative'}`;
-                            
-                            // Update ROI
-                            const roiCell = row.querySelector('.roi');
-                            roiCell.textContent = `${parseFloat(trade.roi).toFixed(2)}%`;
-                            roiCell.className = `roi ${parseFloat(trade.roi) > 0 ? 'profit' : 'loss'}`;
-                            
-                            // Update current price
-                            const priceCell = row.querySelector('.current-price');
-                            priceCell.textContent = parseFloat(trade.current_price).toFixed(2);
-                        }
+                    const row = document.querySelector(`#active-trades tr[data-trade-id="${trade.id}"]`);
+                    if (row) {
+                        // Update P/L
+                        const plCell = row.querySelector('.profit-loss');
+                        plCell.textContent = parseFloat(trade.profit_loss).toFixed(2);
+                        plCell.className = `profit-loss ${parseFloat(trade.profit_loss) >= 0 ? 'positive' : 'negative'}`;
+                        
+                        // Update ROI
+                        const roiCell = row.querySelector('.roi');
+                        roiCell.textContent = `${parseFloat(trade.roi).toFixed(2)}%`;
+                        roiCell.className = `roi ${parseFloat(trade.roi) > 0 ? 'profit' : 'loss'}`;
+                        
+                        // Update current price
+                        const priceCell = row.querySelector('.current-price');
+                        priceCell.textContent = parseFloat(trade.current_price).toFixed(2);
                     }
                 });
                 
@@ -401,13 +399,16 @@ function handleTradeSubmit(event) {
     submitButton.textContent = 'Processing...';
     
     const formData = new FormData(form);
+    const enableStopLossCheckbox = document.getElementById('enable_stop_loss');
+    
     const tradeData = {
         coin: formData.get('coin'),
         amount: parseFloat(formData.get('amount')),
         order_type: formData.get('order_type'),
         limit_price: formData.get('order_type') === 'limit' ? parseFloat(formData.get('limit_price')) : null,
         take_profit: parseFloat(formData.get('take_profit')),
-        stop_loss: parseFloat(formData.get('stop_loss'))
+        take_profit_type: formData.get('take_profit_type'),
+        stop_loss: enableStopLossCheckbox.checked ? parseFloat(formData.get('stop_loss')) : null // Send null if disabled
     };
     
     // Remove any existing error messages
@@ -461,6 +462,12 @@ function handleTradeSubmit(event) {
             // Reset form
             form.reset();
             document.getElementById('limit_price_container').style.display = 'none';
+            // Reset stop loss toggle and input
+            if (enableStopLossCheckbox) {
+                enableStopLossCheckbox.checked = false;  // Keep it unchecked by default
+                stopLossInput.disabled = true;  // Keep it disabled by default
+                stopLossInput.value = '';  // Clear the value
+            }
             
             // Reset button after delay
             setTimeout(() => {
@@ -539,17 +546,13 @@ async function declineTrade(tradeId) {
 
 // Function to validate trade data
 function isValidTrade(trade) {
+    // Basic validation - only check for required fields
     return trade && 
            trade.id && 
            trade.coin && 
-           !isNaN(parseFloat(trade.amount_usdt)) && 
-           !isNaN(parseFloat(trade.entry_price)) && 
-           !isNaN(parseFloat(trade.current_price)) && 
-           !isNaN(parseFloat(trade.profit_loss)) && 
-           !isNaN(parseFloat(trade.fees)) && 
-           !isNaN(parseFloat(trade.roi)) && 
-           !isNaN(parseFloat(trade.take_profit)) && 
-           !isNaN(parseFloat(trade.stop_loss));
+           trade.status &&
+           trade.amount_usdt !== undefined &&  // Make sure amount exists
+           trade.entry_price !== undefined;    // Make sure entry price exists
 }
 
 // Function to update the active trades table
@@ -574,8 +577,10 @@ function updateActiveTradesTable(trades) {
         tbody.appendChild(noTradesRow);
     } else {
         trades.forEach(trade => {
+            // Store in map regardless of validation
+            activeTradesMap.set(trade.id, trade);
+            // Add to table if it passes validation
             if (isValidTrade(trade)) {
-                activeTradesMap.set(trade.id, trade);
                 addTradeToTable(trade);
             }
         });
@@ -603,6 +608,7 @@ function addTradeToTable(trade) {
     
     // Format numbers with commas and 2 decimal places
     const formatNumber = (num) => {
+        if (num === null || num === undefined) return '0.00';
         const parsed = parseFloat(num);
         return isNaN(parsed) ? '0.00' : parsed.toLocaleString('en-US', {
             minimumFractionDigits: 2,
@@ -610,18 +616,28 @@ function addTradeToTable(trade) {
         });
     };
 
+    // Format take profit display
+    const takeProfitDisplay = trade.take_profit_type === 'dollar' 
+        ? `$${formatNumber(trade.take_profit)}`
+        : `${formatNumber(trade.take_profit)}%`;
+
+    // Format stop loss display - always show N/A if stop_loss is null or undefined
+    const stopLossDisplay = (trade.stop_loss === null || trade.stop_loss === undefined) 
+        ? 'N/A' 
+        : `${formatNumber(trade.stop_loss)}%`;
+
     row.innerHTML = `
         <td class="coin">${trade.coin}</td>
         <td class="amount">${formatNumber(trade.amount_usdt)} USDT</td>
         <td class="entry-price">${formatNumber(trade.entry_price)}</td>
         <td class="current-price">${formatNumber(trade.current_price)}</td>
-        <td class="profit-loss ${parseFloat(trade.profit_loss) >= 0 ? 'positive' : 'negative'}">
+        <td class="profit-loss ${parseFloat(trade.profit_loss || 0) >= 0 ? 'positive' : 'negative'}">
             ${formatNumber(trade.profit_loss)}
         </td>
         <td class="fees">${formatNumber(trade.fees)}</td>
-        <td class="take-profit">${parseFloat(trade.take_profit).toFixed(1)}%</td>
-        <td class="stop-loss">${parseFloat(trade.stop_loss).toFixed(1)}%</td>
-        <td class="roi ${parseFloat(trade.roi) > 0 ? 'profit' : 'loss'}">${parseFloat(trade.roi).toFixed(2)}%</td>
+        <td class="take-profit">${takeProfitDisplay}</td>
+        <td class="stop-loss">${stopLossDisplay}</td>
+        <td class="roi ${parseFloat(trade.roi || 0) > 0 ? 'profit' : 'loss'}">${formatNumber(trade.roi)}%</td>
         <td class="status">${trade.status || 'Unknown'}</td>
         <td class="action">
             ${trade.status === "Open" ? 
@@ -734,8 +750,24 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
+    // Stop Loss Toggle
+    const enableStopLossCheckbox = document.getElementById('enable_stop_loss');
+    const stopLossInput = document.getElementById('stop_loss');
+
+    if (enableStopLossCheckbox && stopLossInput) {
+        // Set initial state
+        stopLossInput.disabled = !enableStopLossCheckbox.checked;
+
+        enableStopLossCheckbox.addEventListener('change', function() {
+            stopLossInput.disabled = !this.checked;
+            if (!this.checked) {
+                stopLossInput.value = ''; // Clear value when disabled
+            }
+        });
+    }
+
     // Remove amount input restrictions
-    const amountInput = document.getElementById('amount_usdt');
+    const amountInput = document.getElementById('amount');
     if (amountInput) {
         amountInput.removeAttribute('step');
         amountInput.removeAttribute('min');
@@ -782,6 +814,7 @@ async function placeAutoBuyOrder() {
             amount: parseFloat(formData.get('amount')),
             order_type: 'market', // Always use market order for auto-buy
             take_profit: parseFloat(formData.get('take_profit')),
+            take_profit_type: formData.get('take_profit_type'),
             stop_loss: parseFloat(formData.get('stop_loss'))
         };
         

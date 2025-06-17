@@ -507,6 +507,43 @@
             text-align: center;
             line-height: 1.5;
         }
+
+        .take-profit-container {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .take-profit-container select {
+            width: 60px;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            background-color: white;
+        }
+
+        .take-profit-container input {
+            flex: 1;
+        }
+
+        .stop-loss-container {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .stop-loss-container input[type="number"] {
+            flex: 1;
+        }
+
+        .stop-loss-container input[type="checkbox"] {
+            width: auto;
+            margin-right: 5px;
+        }
+
+        .stop-loss-container label[for="enable_stop_loss"] {
+            margin-bottom: 0;
+        }
     </style>
 </head>
 <body>
@@ -565,13 +602,23 @@
                         <input type="number" id="amount" name="amount" step="0.01" required>
                     </div>
                     <div class="form-group">
-                        <label for="take_profit">Take Profit (%)</label>
-                        <input type="number" id="take_profit" name="take_profit" step="0.1" min="0.1" value="10">
+                        <label for="take_profit">Take Profit</label>
+                        <div class="take-profit-container">
+                            <input type="number" id="take_profit" name="take_profit" step="0.001" min="0.001" value="10">
+                            <select id="take_profit_type" name="take_profit_type">
+                                <option value="percentage">%</option>
+                                <option value="dollar">$</option>
+                            </select>
+                        </div>
                         <div class="hint">Default: 10%</div>
                     </div>
                     <div class="form-group">
                         <label for="stop_loss">Stop Loss (%)</label>
-                        <input type="number" id="stop_loss" name="stop_loss" step="0.1" min="0.1" value="5">
+                        <div class="stop-loss-container">
+                            <input type="number" id="stop_loss" name="stop_loss" step="0.001" min="0.001">
+                            <input type="checkbox" id="enable_stop_loss">
+                            <label for="enable_stop_loss">Enable</label>
+                        </div>
                         <div class="hint">Default: 5%</div>
                     </div>
                     <div class="form-group">

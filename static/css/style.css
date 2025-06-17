@@ -506,4 +506,41 @@ tr:hover {
 
 .chat-input button:hover {
     background-color: #2980b9;
+}
+
+.take-profit-container {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.take-profit-container select {
+    width: 60px;
+    padding: 8px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    background-color: white;
+}
+
+.take-profit-container input {
+    flex: 1;
+}
+
+.stop-loss-container {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.stop-loss-container input[type="number"] {
+    flex: 1;
+}
+
+.stop-loss-container input[type="checkbox"] {
+    width: auto;
+    margin-right: 5px;
+}
+
+.stop-loss-container label[for="enable_stop_loss"] {
+    margin-bottom: 0;
 } 

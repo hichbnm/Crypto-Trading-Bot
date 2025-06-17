@@ -596,7 +596,7 @@ async def fetch_price(coin: str) -> Optional[float]:
         logger.error(f"Error fetching price for {coin}: {str(e)}")
         return None
 
-async def broadcast_trade_update(trade):
+async def broadcast_trade_update(trade=None):
     """Broadcast a trade update to all connected clients."""
     if not connected_clients:
         return
@@ -616,7 +616,7 @@ async def broadcast_trade_update(trade):
                 "fees": active_trade.get("fees", 0.0),
                 "roi": active_trade.get("roi", 0.0),
                 "take_profit": active_trade.get("take_profit", TAKE_PROFIT_PERCENTAGE),
-                "stop_loss": active_trade.get("stop_loss", STOP_LOSS_PERCENTAGE),
+                "stop_loss": active_trade.get("stop_loss"),  # Just pass the value as is
                 "entry_time": format_datetime(active_trade.get("entry_time")) if active_trade.get("entry_time") else "N/A"
             }
             trades_data.append(trade_data)
@@ -705,7 +705,7 @@ async def lifespan(app: FastAPI):
                                 if trade["roi"] >= trade["take_profit"]:
                                     should_sell = True
                                     sell_reason = "Take Profit"
-                                elif trade["roi"] <= -trade["stop_loss"]:
+                                elif trade.get("stop_loss") is not None and trade["roi"] <= -trade["stop_loss"]:
                                     should_sell = True
                                     sell_reason = "Stop Loss"
                                 elif current_rsi > RSI_OVERBOUGHT:
@@ -764,7 +764,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     "fees": trade.get("fees", 0.0),
                     "roi": trade.get("roi", 0.0),
                     "take_profit": trade.get("take_profit", TAKE_PROFIT_PERCENTAGE),
-                    "stop_loss": trade.get("stop_loss", STOP_LOSS_PERCENTAGE),
+                    "stop_loss": trade.get("stop_loss"),
                     "entry_time": format_datetime(trade.get("entry_time")) if trade.get("entry_time") else "N/A"
                 }
                 trades_data.append(trade_data)
@@ -815,7 +815,7 @@ async def home(request: Request, user: str = Depends(require_auth)):
                 "fees": metrics.get("fees", 0.0),
                 "roi": metrics.get("roi", 0.0),
                 "take_profit": trade.get("take_profit", TAKE_PROFIT_PERCENTAGE),
-                "stop_loss": trade.get("stop_loss", STOP_LOSS_PERCENTAGE),
+                "stop_loss": trade.get("stop_loss"),
                 "entry_time": format_datetime(trade.get("entry_time")) if trade.get("entry_time") else "N/A"
             }
             unique_trades[key] = processed_trade
@@ -846,7 +846,7 @@ async def home(request: Request, user: str = Depends(require_auth)):
                 "exit_time": format_datetime(trade.get("exit_time")) if trade.get("exit_time") else "N/A",
                 "roi": trade.get("roi", 0.0),
                 "take_profit": trade.get("take_profit", TAKE_PROFIT_PERCENTAGE),
-                "stop_loss": trade.get("stop_loss", STOP_LOSS_PERCENTAGE)
+                "stop_loss": trade.get("stop_loss")
             }
             unique_history[key] = processed_history
     processed_history = list(unique_history.values())
@@ -863,6 +863,7 @@ class TradeRequest(BaseModel):
     order_type: str
     limit_price: Optional[float] = None
     take_profit: Optional[float] = None
+    take_profit_type: Optional[str] = "percentage"
     stop_loss: Optional[float] = None
 
 async def _create_trade_logic(trade_request: TradeRequest):
@@ -925,7 +926,7 @@ async def _create_trade_logic(trade_request: TradeRequest):
             min_qty = float(lot_size_filter['minQty'])
             precision = len(str(step_size).rstrip('0').split('.')[-1])
             
-            # Round up to the nearest valid step size to ensure we use the full amount
+            # Round up to the nearest valid step size
             quantity = math.ceil(quantity / step_size) * step_size
             formatted_quantity = format(quantity, f'.{precision}f')
             logger.info(f"Formatted quantity: {formatted_quantity} {symbol.replace('USDT', '')}")
@@ -1032,6 +1033,15 @@ async def _create_trade_logic(trade_request: TradeRequest):
         # Calculate initial fees (only for market orders)
         entry_fee = round(amount_usdt * TRADING_FEE, 2) if status == "Open" else 0.0
 
+        # Calculate take profit price based on type
+        if trade_request.take_profit is not None:
+            if trade_request.take_profit_type == "percentage":
+                take_profit_price = entry_price * (1 + trade_request.take_profit / 100)
+            else:  # dollar amount
+                take_profit_price = entry_price + trade_request.take_profit
+        else:
+            take_profit_price = entry_price * (1 + TAKE_PROFIT_PERCENTAGE / 100)
+        
         # Create trade data
         trade = {
             "id": str(uuid.uuid4()),
@@ -1049,7 +1059,9 @@ async def _create_trade_logic(trade_request: TradeRequest):
             "roi": 0.0,
             "binance_order_id": order['orderId'],  # Store Binance order ID
             "take_profit": trade_request.take_profit if trade_request.take_profit is not None else TAKE_PROFIT_PERCENTAGE,
-            "stop_loss": trade_request.stop_loss if trade_request.stop_loss is not None else STOP_LOSS_PERCENTAGE
+            "stop_loss": trade_request.stop_loss,
+            "take_profit_type": trade_request.take_profit_type,
+            "take_profit_price": take_profit_price
         }
         
         # Add to active trades
@@ -1058,7 +1070,7 @@ async def _create_trade_logic(trade_request: TradeRequest):
         # Save trades to file
         save_trades()
         
-        # Broadcast trade update
+        # Broadcast the new trade immediately
         await broadcast_trade_update(trade)
         
         return {
@@ -1540,7 +1552,7 @@ async def auto_buy(trade_request: TradeRequest, user: str = Depends(require_auth
             "coin": trade_request.coin,
             "amount_usdt": float(trade_request.amount),
             "quantity": float(formatted_quantity),
-            "order_type": "market",  # Will be executed as market order when RSI < 30
+            "order_type": trade_request.order_type,
             "entry_price": current_price,
             "current_price": current_price,
             "status": "Pending",
@@ -1551,7 +1563,7 @@ async def auto_buy(trade_request: TradeRequest, user: str = Depends(require_auth
             "roi": 0.0,
             "binance_order_id": None,  # Will be set when order is executed
             "take_profit": trade_request.take_profit if trade_request.take_profit is not None else TAKE_PROFIT_PERCENTAGE,
-            "stop_loss": trade_request.stop_loss if trade_request.stop_loss is not None else STOP_LOSS_PERCENTAGE,
+            "stop_loss": trade_request.stop_loss,
             "rsi_trigger": RSI_OVERSOLD,
             "current_rsi": rsi
         }
