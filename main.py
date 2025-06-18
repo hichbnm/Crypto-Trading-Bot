@@ -29,6 +29,7 @@ import math
 import secrets
 from starlette.middleware.sessions import SessionMiddleware
 import numpy as np
+import argparse
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -38,7 +39,7 @@ logger = logging.getLogger(__name__)
 RSI_PERIOD = 14
 RSI_OVERSOLD = 45
 RSI_OVERBOUGHT = 60
-
+ 
 def get_server_time():
     """Get the current server time from Binance"""
     try:
@@ -793,7 +794,7 @@ async def home(request: Request, user: str = Depends(require_auth)):
         return (
             trade.get("coin"),
             float(trade.get("amount_usdt", trade.get("amount", 0.0))),
-            float(trade.get("entry_price", 0.0)),
+            float(trade.get("entry_price") or 0.0),
             trade.get("status")
         )
     unique_trades = {}
@@ -1665,4 +1666,9 @@ async def startup_event():
     logger.info("Background tasks started")
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    parser = argparse.ArgumentParser(description='Run the FastAPI application')
+    parser.add_argument('--port', type=int, default=8000, help='Port to run the server on (default: 8000)')
+    parser.add_argument('--host', type=str, default="0.0.0.0", help='Host to run the server on (default: 0.0.0.0)')
+    args = parser.parse_args()
+    
+    uvicorn.run(app, host=args.host, port=args.port)

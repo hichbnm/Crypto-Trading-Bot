@@ -754,7 +754,8 @@
             });
             
             // Update active trades count
-            document.getElementById('active-trades-count').textContent = activeTradesMap.size;
+            const actionableCount = Array.from(activeTradesMap.values()).filter(trade => trade.status === 'Open' || trade.status === 'Pending').length;
+            document.getElementById('active-trades-count').textContent = actionableCount;
 
             // --- Calculate and update P/L header values ---
             // Calculate active P/L

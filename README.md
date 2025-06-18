@@ -1,142 +1,162 @@
-# RSI Trading Bot
+# Crypto Trading Bot Documentation
 
-## Project Structure
-```
-production/
-├── main.py           # Main trading bot application
-├── config.py         # Configuration and API keys
-├── test.py          # Backtesting script
-├── trades.json      # Trade history storage
-├── requirements.txt # Python dependencies
-├── templates/       # HTML templates
-└── static/         # Static files (CSS, JS)
-```
+## Overview
+This is an automated cryptocurrency trading bot that supports both manual and automated trading strategies. The bot integrates with Binance and provides features like take profit, stop loss, and RSI-based auto-trading.
+
+## Prerequisites
+- Python 3.8 or higher
+- Binance account with API keys
+- Sufficient USDT balance for trading
 
 ## Installation
 
-1. Install Python 3.7 or higher
-2. Install dependencies:
+1. Clone the repository:
+```bash
+git clone <repository-url>
+cd <repository-directory>
+```
+
+2. Install required packages:
 ```bash
 pip install -r requirements.txt
 ```
-3. Set up your Binance API keys in `config.py`:
-```python
-API_KEY = "your_binance_api_key"
-API_SECRET = "your_binance_api_secret"
+
+3. Create a `.env` file in the root directory with your Binance API credentials:
+```
+BINANCE_API_KEY=your_api_key_here
+BINANCE_API_SECRET=your_api_secret_here
 ```
 
-## Running the Bot
-
-1. Start the server:
+4. Start the bot:
 ```bash
-uvicorn main:app --reload
+python main.py
 ```
-2. Open your browser and go to `http://localhost:8000`
-3. Log in with your credentials
 
-## Trading Features
+## Features
 
-### Auto Buy
-1. Click "Auto Buy" button
-2. Enter amount in USDT
-3. The bot will:
-   - Check your USDT balance
-   - Calculate RSI
-   - Create a pending order
-   - Execute when RSI < 30
+### 1. Manual Trading
+- **Market Orders**: Execute trades at current market price
+- **Limit Orders**: Set specific entry prices
+- **Take Profit**: Set profit targets in percentage or dollar amount
+- **Stop Loss**: Optional stop loss protection
+
+### 2. Auto Trading
+- **RSI Strategy**: Automatically enters trades when RSI is oversold (< 30)
+- **Auto Take Profit**: Closes trades when profit target is reached
+- **Auto Stop Loss**: Optional protection against losses
+
+### 3. Trade Management
+- Real-time price monitoring
+- Profit/Loss tracking
+- Trade history
+- Active trade management
+
+## How to Use
 
 ### Manual Trading
-1. Click "New Trade"
-2. Fill in:
-   - Coin (e.g., BTC, ETH)
-   - Amount in USDT
-   - Order type (market/limit)
-   - Take profit (default 4%)
-   - Stop loss (default -20%)
 
-## Strategy Details
+1. **Place a Trade**:
+   - Select the cryptocurrency (e.g., Bitcoin, Ethereum)
+   - Enter the amount in USDT
+   - Choose order type (Market or Limit)
+   - Set take profit (percentage or dollar amount)
+   - Optionally enable and set stop loss
+   - Click "Place Order"
 
-### Entry Conditions
-- RSI < 30 (oversold)
-- 1-hour timeframe
-- RSI period: 14
+2. **Take Profit Options**:
+   - **Percentage**: Enter a percentage (e.g., 10%)
+   - **Dollar Amount**: Enter a dollar value (e.g., $100)
+   - Default is 10% if not specified
 
-### Exit Conditions
-1. Take Profit: 4%
-2. Stop Loss: -20%
-3. RSI > 70 (overbought)
+3. **Stop Loss**:
+   - Check "Enable" to activate stop loss
+   - Enter stop loss percentage
+   - Default is 5% if not specified
 
-## Monitoring Trades
-- View active trades on the dashboard
-- See real-time price updates
-- Monitor RSI values
-- Track profit/loss
+### Auto Trading
 
-## Backtesting
-Run the backtest script to test the strategy:
-```bash
-python test.py
-```
-This will:
-- Test the strategy on historical data
-- Show performance metrics
-- Display charts
+1. **Start Auto Trading**:
+   - Select the cryptocurrency
+   - Enter the amount in USDT
+   - Set take profit and stop loss (optional)
+   - Click "Auto Buy"
+
+2. **How Auto Trading Works**:
+   - Bot monitors RSI (Relative Strength Index)
+   - Enters trade when RSI < 30 (oversold condition)
+   - Automatically closes when:
+     - Take profit is reached
+     - Stop loss is triggered
+     - RSI becomes overbought (> 70)
+
+### Managing Trades
+
+1. **Active Trades**:
+   - View all open trades in the "Active Trades" table
+   - Monitor current prices and profit/loss
+   - Close trades manually if needed
+
+2. **Trade History**:
+   - View all closed trades
+   - Track performance and profitability
+   - Analyze trading patterns
 
 ## Important Notes
 
-### Risk Management
-- Start with small amounts
-- Monitor trades regularly
-- Don't invest more than you can afford to lose
+1. **Risk Management**:
+   - Always use stop loss for protection
+   - Start with small amounts
+   - Monitor trades regularly
 
-### Best Practices
-1. Keep API keys secure
-2. Monitor trade history
-3. Check bot performance
-4. Adjust parameters if needed
+2. **Trading Fees**:
+   - Binance charges 0.1% per trade
+   - Fees are automatically calculated and displayed
 
-### Common Issues
-1. **API Connection**
-   - Check internet connection
-   - Verify API keys
-   - Check Binance API status
+3. **Best Practices**:
+   - Test with small amounts first
+   - Monitor the bot's performance
+   - Keep your API keys secure
+   - Don't share your credentials
 
-2. **Order Execution**
-   - Ensure sufficient USDT balance
-   - Check minimum order amounts
-   - Verify sufficient funds
+## Troubleshooting
+
+1. **Common Issues**:
+   - "Insufficient Balance": Ensure you have enough USDT
+   - "Invalid API Key": Check your Binance API credentials
+   - "Connection Error": Check your internet connection
+
+2. **Error Messages**:
+   - All errors are displayed in the interface
+   - Check the console for detailed logs
 
 ## Security
-- API keys stored in config.py
-- Session-based authentication
-- Secure WebSocket connections
 
-## Maintenance
-1. Regular updates
-2. Monitor error logs
-3. Check Binance API status
-4. Backup trade history
+1. **API Security**:
+   - Never share your API keys
+   - Use API keys with trading permissions only
+   - Enable IP restrictions in Binance
+
+2. **Account Security**:
+   - Use strong passwords
+   - Enable 2FA on your Binance account
+   - Regularly monitor your trades
 
 ## Support
-If you have issues:
-1. Check error logs
-2. Verify API keys
-3. Check balance
-4. Check Binance API status
 
-## Disclaimer
-This bot is for educational purposes. Cryptocurrency trading involves risk. Always do your own research.
+For issues or questions:
+1. Check the console logs
+2. Review the error messages
+3. Contact support with:
+   - Error message
+   - Steps to reproduce
+   - Screenshots if applicable
 
-## Requirements
-```
-fastapi
-uvicorn
-python-binance
-python-dotenv
-numpy
-pandas
-matplotlib
-```
+## Updates
 
-## License
-This project is licensed under the MIT License - see the LICENSE file for details. 
+The bot is regularly updated with:
+- New features
+- Bug fixes
+- Performance improvements
+- Security enhancements
+
+Check the repository for the latest updates and improvements. 

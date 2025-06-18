@@ -795,6 +795,10 @@ document.addEventListener('DOMContentLoaded', function() {
             ws.close();
         }
     });
+
+    // Fetch active trades count from backend and update header
+    fetchAndUpdateActiveTradesCount();
+    setInterval(fetchAndUpdateActiveTradesCount, 10000); // update every 10s
 });
 
 // Add this function after the existing functions
@@ -875,5 +879,20 @@ async function placeAutoBuyOrder() {
         // Reset button state
         submitButton.disabled = false;
         submitButton.textContent = 'Auto Buy (RSI)';
+    }
+}
+
+// Fetch active trades count from backend and update header
+async function fetchAndUpdateActiveTradesCount() {
+    try {
+        const response = await fetch('/active-trades');
+        if (!response.ok) return;
+        const trades = await response.json();
+        // Only count trades with status 'Open' or 'Pending'
+        const actionableCount = trades.filter(trade => trade.status === 'Open' || trade.status === 'Pending').length;
+        const countElem = document.getElementById('active-trades-count');
+        if (countElem) countElem.textContent = actionableCount;
+    } catch (e) {
+        // Optionally log error
     }
 } 
