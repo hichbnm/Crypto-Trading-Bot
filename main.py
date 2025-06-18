@@ -617,6 +617,7 @@ async def broadcast_trade_update(trade=None):
                 "fees": active_trade.get("fees", 0.0),
                 "roi": active_trade.get("roi", 0.0),
                 "take_profit": active_trade.get("take_profit", TAKE_PROFIT_PERCENTAGE),
+                "take_profit_type": active_trade.get("take_profit_type", "percentage"),
                 "stop_loss": active_trade.get("stop_loss"),  # Just pass the value as is
                 "entry_time": format_datetime(active_trade.get("entry_time")) if active_trade.get("entry_time") else "N/A"
             }
@@ -765,6 +766,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     "fees": trade.get("fees", 0.0),
                     "roi": trade.get("roi", 0.0),
                     "take_profit": trade.get("take_profit", TAKE_PROFIT_PERCENTAGE),
+                    "take_profit_type": trade.get("take_profit_type", "percentage"),
                     "stop_loss": trade.get("stop_loss"),
                     "entry_time": format_datetime(trade.get("entry_time")) if trade.get("entry_time") else "N/A"
                 }
@@ -816,6 +818,7 @@ async def home(request: Request, user: str = Depends(require_auth)):
                 "fees": metrics.get("fees", 0.0),
                 "roi": metrics.get("roi", 0.0),
                 "take_profit": trade.get("take_profit", TAKE_PROFIT_PERCENTAGE),
+                "take_profit_type": trade.get("take_profit_type", "percentage"),
                 "stop_loss": trade.get("stop_loss"),
                 "entry_time": format_datetime(trade.get("entry_time")) if trade.get("entry_time") else "N/A"
             }
@@ -1039,7 +1042,9 @@ async def _create_trade_logic(trade_request: TradeRequest):
             if trade_request.take_profit_type == "percentage":
                 take_profit_price = entry_price * (1 + trade_request.take_profit / 100)
             else:  # dollar amount
-                take_profit_price = entry_price + trade_request.take_profit
+                # Sell when position value reaches amount_usdt + take_profit
+                # sell_price = (amount_usdt + take_profit) / quantity
+                take_profit_price = (amount_usdt + trade_request.take_profit) / float(formatted_quantity)
         else:
             take_profit_price = entry_price * (1 + TAKE_PROFIT_PERCENTAGE / 100)
         
@@ -1060,9 +1065,9 @@ async def _create_trade_logic(trade_request: TradeRequest):
             "roi": 0.0,
             "binance_order_id": order['orderId'],  # Store Binance order ID
             "take_profit": trade_request.take_profit if trade_request.take_profit is not None else TAKE_PROFIT_PERCENTAGE,
-            "stop_loss": trade_request.stop_loss,
-            "take_profit_type": trade_request.take_profit_type,
-            "take_profit_price": take_profit_price
+            "take_profit_type": trade_request.take_profit_type if hasattr(trade_request, 'take_profit_type') else 'percentage',
+            "take_profit_price": take_profit_price,
+            "stop_loss": trade_request.stop_loss
         }
         
         # Add to active trades
@@ -1565,6 +1570,7 @@ async def auto_buy(trade_request: TradeRequest, user: str = Depends(require_auth
             "roi": 0.0,
             "binance_order_id": None,  # Will be set when order is executed
             "take_profit": trade_request.take_profit if trade_request.take_profit is not None else TAKE_PROFIT_PERCENTAGE,
+            "take_profit_type": trade_request.take_profit_type if hasattr(trade_request, 'take_profit_type') else 'percentage',
             "stop_loss": trade_request.stop_loss,
             "rsi_trigger": RSI_OVERSOLD,
             "current_rsi": rsi

@@ -219,11 +219,11 @@ function updateTradeData(trade) {
         row.querySelector('.coin').textContent = trade.coin;
         row.querySelector('.amount').textContent = `${parseFloat(trade.amount_usdt).toFixed(2)} USDT`;
         row.querySelector('.entry-price').textContent = parseFloat(trade.entry_price).toFixed(2);
-        row.querySelector('.current-price').textContent = parseFloat(trade.current_price).toFixed(2);
+        row.querySelector('.current-price').textContent = `$${parseFloat(trade.current_price).toFixed(2)}`;
         
         // Update P/L
         const plCell = row.querySelector('.profit-loss');
-        plCell.textContent = parseFloat(trade.profit_loss).toFixed(2);
+        plCell.textContent = `$${parseFloat(trade.profit_loss).toFixed(2)}`;
         plCell.className = `profit-loss ${parseFloat(trade.profit_loss) >= 0 ? 'positive' : 'negative'}`;
         
         // Update fees
@@ -248,17 +248,29 @@ function updateTradeData(trade) {
         } else {
             actionCell.innerHTML = '';
         }
+
+        // Update take profit display
+        const takeProfitCell = row.querySelector('.take-profit');
+        if (takeProfitCell) {
+            if (trade.take_profit_type === 'dollar') {
+                takeProfitCell.textContent = `$${parseFloat(trade.take_profit).toFixed(2)}`;
+            } else {
+                takeProfitCell.textContent = `${parseFloat(trade.take_profit).toFixed(2)}%`;
+            }
+        }
     } else {
         // Add new row only if it doesn't exist
         const newRow = document.createElement('tr');
         newRow.setAttribute('data-trade-id', trade.id);
         newRow.innerHTML = `
             <td class="coin">${trade.coin}</td>
-            <td class="amount">${parseFloat(trade.amount_usdt).toFixed(2)} USDT</td>
+            <td class="amount">$${parseFloat(trade.amount_usdt).toFixed(2)} USDT</td>
             <td class="entry-price">${trade.status === "Pending" ? 'N/A' : `$${parseFloat(trade.entry_price).toFixed(2)}`}</td>
-            <td class="current-price">${parseFloat(trade.current_price).toFixed(2)}</td>
-            <td class="profit-loss ${parseFloat(trade.profit_loss) >= 0 ? 'positive' : 'negative'}">${parseFloat(trade.profit_loss).toFixed(2)}</td>
-            <td class="fees">${parseFloat(trade.fees).toFixed(2)}</td>
+            <td class="current-price">$${parseFloat(trade.current_price).toFixed(2)}</td>
+            <td class="profit-loss ${parseFloat(trade.profit_loss) >= 0 ? 'positive' : 'negative'}">
+                $${parseFloat(trade.profit_loss).toFixed(2)}
+            </td>
+            <td class="fees">$${parseFloat(trade.fees).toFixed(2)}</td>
             <td class="take-profit">${parseFloat(trade.take_profit).toFixed(1)}%</td>
             <td class="stop-loss">${parseFloat(trade.stop_loss).toFixed(1)}%</td>
             <td class="roi ${parseFloat(trade.roi) > 0 ? 'profit' : 'loss'}">${parseFloat(trade.roi).toFixed(2)}%</td>
@@ -336,7 +348,7 @@ function connectWebSocket() {
                     if (row) {
                         // Update P/L
                         const plCell = row.querySelector('.profit-loss');
-                        plCell.textContent = parseFloat(trade.profit_loss).toFixed(2);
+                        plCell.textContent = `$${parseFloat(trade.profit_loss).toFixed(2)}`;
                         plCell.className = `profit-loss ${parseFloat(trade.profit_loss) >= 0 ? 'positive' : 'negative'}`;
                         
                         // Update ROI
@@ -346,7 +358,7 @@ function connectWebSocket() {
                         
                         // Update current price
                         const priceCell = row.querySelector('.current-price');
-                        priceCell.textContent = parseFloat(trade.current_price).toFixed(2);
+                        priceCell.textContent = `$${parseFloat(trade.current_price).toFixed(2)}`;
                     }
                 });
                 
@@ -623,9 +635,12 @@ function addTradeToTable(trade) {
     };
 
     // Format take profit display
-    const takeProfitDisplay = trade.take_profit_type === 'dollar' 
-        ? `$${formatNumber(trade.take_profit)}`
-        : `${formatNumber(trade.take_profit)}%`;
+    let takeProfitDisplay = '';
+    if (trade.take_profit_type === 'dollar') {
+        takeProfitDisplay = `$${formatNumber(trade.take_profit)}`;
+    } else {
+        takeProfitDisplay = `${formatNumber(trade.take_profit)}%`;
+    }
 
     // Format stop loss display - always show N/A if stop_loss is null or undefined
     const stopLossDisplay = (trade.stop_loss === null || trade.stop_loss === undefined) 
