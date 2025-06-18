@@ -37,8 +37,8 @@ logger = logging.getLogger(__name__)
 
 # Add these constants near the top of main.py, after the other constants
 RSI_PERIOD = 14
-RSI_OVERSOLD = 45
-RSI_OVERBOUGHT = 60
+RSI_OVERSOLD = 58
+RSI_OVERBOUGHT = 70
  
 def get_server_time():
     """Get the current server time from Binance"""
@@ -347,6 +347,9 @@ def save_trades():
 
 # Initialize trades from file
 active_trades, trade_history = load_trades()
+
+# Add this global set near the top of the file, after other globals
+canceled_auto_buy_coins = set()
 
 async def execute_binance_order(symbol: str, side: str, order_type: str, quantity: float, price: float = None) -> dict:
     """
@@ -716,7 +719,36 @@ async def lifespan(app: FastAPI):
                                 
                                 if should_sell:
                                     logger.info(f"Selling {symbol} due to {sell_reason} (RSI: {current_rsi:.2f}, ROI: {trade['roi']:.2f}%)")
+                                    # Save parameters before closing
+                                    auto_buy_params = None
+                                    if trade.get('auto_buy_loop'):
+                                        auto_buy_params = {
+                                            'coin': trade['coin'],
+                                            'amount': trade['amount_usdt'],
+                                            'order_type': trade['order_type'],
+                                            'take_profit': trade.get('take_profit'),
+                                            'take_profit_type': trade.get('take_profit_type', 'percentage'),
+                                            'stop_loss': trade.get('stop_loss'),
+                                            # Only for auto-buy loop
+                                            'auto_buy_loop': True
+                                        }
                                     await close_trade(trade["id"])
+                                    # If auto_buy_loop, create a new auto-buy trade
+                                    if auto_buy_params:
+                                        coin_lower = auto_buy_params['coin'].lower()
+                                        if coin_lower in canceled_auto_buy_coins:
+                                            logger.info(f"Auto-buy loop for {coin_lower} is canceled by user. No rebuy.")
+                                            continue
+                                        from fastapi import Request
+                                        class DummyRequest:
+                                            cookies = {}
+                                        dummy_request = DummyRequest()
+                                        from fastapi import Depends
+                                        try:
+                                            trade_request = TradeRequest(**auto_buy_params)
+                                            await auto_buy(trade_request, user='auto')
+                                        except Exception as e:
+                                            logger.error(f"Error auto-rebuying after take profit: {str(e)}")
                                     continue
                                 
                                 # Broadcast update whenever price changes
@@ -1067,7 +1099,8 @@ async def _create_trade_logic(trade_request: TradeRequest):
             "take_profit": trade_request.take_profit if trade_request.take_profit is not None else TAKE_PROFIT_PERCENTAGE,
             "take_profit_type": trade_request.take_profit_type if hasattr(trade_request, 'take_profit_type') else 'percentage',
             "take_profit_price": take_profit_price,
-            "stop_loss": trade_request.stop_loss
+            "stop_loss": trade_request.stop_loss,
+            "auto_buy_loop": True  # Mark this trade for auto-rebuy
         }
         
         # Add to active trades
@@ -1282,19 +1315,18 @@ async def decline_trade(trade_id: str, user: str = Depends(require_auth)):
         trade = next((t for t in active_trades if t["id"] == trade_id), None)
         if not trade:
             raise HTTPException(status_code=404, detail="Trade not found")
-        
         # Check if trade is pending
         if trade["status"] != "Pending":
             raise HTTPException(status_code=400, detail="Can only decline pending trades")
-        
         # Get Binance symbol
         symbol = SYMBOL_MAPPING.get(trade["coin"].lower())
         if not symbol:
             raise HTTPException(status_code=400, detail=f"Unsupported coin: {trade['coin']}")
-        
         # If it's an auto-buy order (has rsi_trigger)
         if trade.get("rsi_trigger") is not None:
             logger.info(f"Declining auto-buy order {trade_id} for {symbol}")
+            # Mark this coin as canceled for auto-buy loop
+            canceled_auto_buy_coins.add(trade["coin"].lower())
             # Just remove from active trades since no Binance order exists yet
             active_trades.remove(trade)
         else:
@@ -1311,22 +1343,17 @@ async def decline_trade(trade_id: str, user: str = Depends(require_auth)):
                     logger.warning(f"Order {trade['binance_order_id']} already canceled or filled")
                 else:
                     raise HTTPException(status_code=500, detail=f"Error canceling Binance order: {str(e)}")
-            
             # Remove from active trades
             active_trades.remove(trade)
-        
         # Save trades to file
         save_trades()
-        
         # Broadcast update
         await broadcast_trade_update(trade)
-        
         return {
             "status": "success", 
             "message": "Trade declined successfully",
             "trade_id": trade_id
         }
-        
     except Exception as e:
         logger.error(f"Error declining trade: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1573,7 +1600,8 @@ async def auto_buy(trade_request: TradeRequest, user: str = Depends(require_auth
             "take_profit_type": trade_request.take_profit_type if hasattr(trade_request, 'take_profit_type') else 'percentage',
             "stop_loss": trade_request.stop_loss,
             "rsi_trigger": RSI_OVERSOLD,
-            "current_rsi": rsi
+            "current_rsi": rsi,
+            "auto_buy_loop": True  # Mark this trade for auto-rebuy
         }
         
         # Add to active trades
@@ -1662,7 +1690,7 @@ async def monitor_pending_orders():
             logger.error(f"Error in monitor_pending_orders: {str(e)}")
             
         # Wait before next check
-        await asyncio.sleep(60)  # Check every minute
+        await asyncio.sleep(10)  # Check every 5 seconds for faster RSI monitoring
 
 @app.on_event("startup")
 async def startup_event():
