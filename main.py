@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 # Add these constants near the top of main.py, after the other constants
 RSI_PERIOD = 14
-RSI_OVERSOLD = 58
+RSI_OVERSOLD = 30
 RSI_OVERBOUGHT = 70
  
 def get_server_time():
