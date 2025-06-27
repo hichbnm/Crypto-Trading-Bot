@@ -557,6 +557,7 @@ async function declineTrade(tradeId) {
         console.error('Error declining trade:', error);
         alert(error.message);
     }
+
 }
 
 // Function to validate trade data

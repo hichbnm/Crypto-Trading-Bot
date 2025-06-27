@@ -23,23 +23,20 @@ from binance.client import Client
 from binance.exceptions import BinanceAPIException
 from config import (
     BINANCE_API_KEY, BINANCE_API_SECRET, TRADING_FEE, 
-    TAKE_PROFIT_PERCENTAGE, STOP_LOSS_PERCENTAGE, PRICE_FETCH_DELAY
+    TAKE_PROFIT_PERCENTAGE, STOP_LOSS_PERCENTAGE, PRICE_FETCH_DELAY,
+    RSI_PERIOD, RSI_OVERSOLD, RSI_OVERBOUGHT
 )
 import math
 import secrets
 from starlette.middleware.sessions import SessionMiddleware
 import numpy as np
 import argparse
+import pandas as pd
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Add these constants near the top of main.py, after the other constants
-RSI_PERIOD = 14
-RSI_OVERSOLD = 30
-RSI_OVERBOUGHT = 70
- 
 def get_server_time():
     """Get the current server time from Binance"""
     try:
@@ -691,7 +688,7 @@ async def lifespan(app: FastAPI):
                             metrics = calculate_trade_metrics(trade, current_price)
                             trade.update(metrics)
                             
-                            # Calculate RSI
+                            # Calculate indicators
                             symbol = SYMBOL_MAPPING.get(trade["coin"].lower())
                             if symbol:
                                 klines = binance_client.get_klines(
@@ -699,23 +696,99 @@ async def lifespan(app: FastAPI):
                                     interval=Client.KLINE_INTERVAL_1HOUR,
                                     limit=100
                                 )
-                                prices = [float(k[4]) for k in klines]
-                                current_rsi = calculate_rsi(prices)
+                                closes = [float(k[4]) for k in klines]
+                                highs = [float(k[2]) for k in klines]
+                                lows = [float(k[3]) for k in klines]
+                                volumes = [float(k[5]) for k in klines]
+                                
+                                # RSI
+                                current_rsi = calculate_rsi(closes)
                                 trade["current_rsi"] = current_rsi
                                 
-                                # Enhanced high turn point detection with 7-price window
+                                # SMA/EMA
+                                from config import SMA_PERIOD, EMA_SHORT_PERIOD, EMA_LONG_PERIOD, MACD_FAST_PERIOD, MACD_SLOW_PERIOD, MACD_SIGNAL_PERIOD, STOCH_K_PERIOD, STOCH_D_PERIOD, BOLLINGER_PERIOD, BOLLINGER_NUM_STD, VOLUME_AVG_PERIOD, VOLUME_CONFIRMATION_MULTIPLIER, TURN_POINT_WINDOW, RSI_CONFIRMATION_LEVEL, RSI_OVERBOUGHT_CONFIRMATION
+                                sma = calculate_sma(closes, SMA_PERIOD)
+                                ema_short = calculate_ema(closes, EMA_SHORT_PERIOD)
+                                ema_long = calculate_ema(closes, EMA_LONG_PERIOD)
+                                
+                                # MACD
+                                macd_line, macd_signal = calculate_macd(closes, MACD_FAST_PERIOD, MACD_SLOW_PERIOD, MACD_SIGNAL_PERIOD)
+                                
+                                # Stochastic Oscillator
+                                stoch_k, stoch_d = calculate_stochastic(highs, lows, closes, STOCH_K_PERIOD, STOCH_D_PERIOD)
+                                
+                                # Bollinger Bands
+                                bb_upper, bb_mid, bb_lower = calculate_bollinger_bands(closes, BOLLINGER_PERIOD, BOLLINGER_NUM_STD)
+                                
+                                # Volume confirmation
+                                avg_vol = calculate_average_volume(volumes, VOLUME_AVG_PERIOD)
+                                vol_confirm = volumes[-1] > VOLUME_CONFIRMATION_MULTIPLIER * avg_vol if avg_vol > 0 else False
+                                
+                                # Turn points
+                                is_high_turn = is_high_turn_point(closes, TURN_POINT_WINDOW)
+                                is_low_turn = is_low_turn_point(closes, TURN_POINT_WINDOW)
+                                
+                                # Save indicators for logging/visualization
+                                trade["sma"] = sma
+                                trade["ema_short"] = ema_short
+                                trade["ema_long"] = ema_long
+                                trade["macd_line"] = macd_line
+                                trade["macd_signal"] = macd_signal
+                                trade["stoch_k"] = stoch_k
+                                trade["stoch_d"] = stoch_d
+                                trade["bb_upper"] = bb_upper
+                                trade["bb_mid"] = bb_mid
+                                trade["bb_lower"] = bb_lower
+                                trade["avg_vol"] = avg_vol
+                                trade["vol_confirm"] = vol_confirm
+                                trade["is_high_turn"] = is_high_turn
+                                trade["is_low_turn"] = is_low_turn
+                                
+                                # --- Enhanced Sell Logic: Match backtest.py ---
                                 should_sell = False
                                 sell_reason = ""
-                                
-                                if trade["roi"] >= trade["take_profit"]:
-                                    should_sell = True
-                                    sell_reason = "Take Profit"
-                                elif trade.get("stop_loss") is not None and trade["roi"] <= -trade["stop_loss"]:
+                                signal_strength = 0
+                                profit_percentage = trade["roi"]
+                                stop_loss_hit = trade.get("stop_loss") is not None and profit_percentage <= -trade["stop_loss"]
+                                if stop_loss_hit:
                                     should_sell = True
                                     sell_reason = "Stop Loss"
-                                elif current_rsi > RSI_OVERBOUGHT:
-                                    should_sell = True
-                                    sell_reason = "RSI Overbought"
+                                elif profit_percentage > 0:
+                                    if profit_percentage >= TAKE_PROFIT_PERCENTAGE:
+                                        should_sell = True
+                                        sell_reason = "Take Profit"
+                                    elif is_high_turn and current_rsi > 70 and vol_confirm and ema_short < ema_long:
+                                        should_sell = True
+                                        sell_reason = "Perfect Exit (5/5): High turn, RSI>70, High Vol, Downtrend"
+                                        signal_strength = 5
+                                    elif is_high_turn and current_rsi > 60 and vol_confirm:
+                                        should_sell = True
+                                        sell_reason = "Strong Exit (4/5): High turn, RSI>60, High Vol"
+                                        signal_strength = 4
+                                    elif current_rsi > 70 and vol_confirm:
+                                        should_sell = True
+                                        sell_reason = "Good Exit (3/5): RSI>70, High Vol"
+                                        signal_strength = 3
+                                    elif is_high_turn and current_rsi > 60:
+                                        should_sell = True
+                                        sell_reason = "Basic Exit (2/5): High turn, RSI>60"
+                                        signal_strength = 2
+                                    elif current_rsi > 70:
+                                        should_sell = True
+                                        sell_reason = "Simple Exit (1/5): RSI>70"
+                                        signal_strength = 1
+                                    elif macd_line < macd_signal:
+                                        should_sell = True
+                                        sell_reason = "MACD Bearish Cross"
+                                    elif stoch_k < stoch_d and stoch_k > 80 and stoch_d > 80:
+                                        should_sell = True
+                                        sell_reason = "Stochastic Bearish Cross (Overbought)"
+                                    elif closes[-1] >= bb_upper:
+                                        should_sell = True
+                                        sell_reason = "Price above upper Bollinger Band"
+                                
+                                # Log all indicator values and signal strength
+                                logger.info(f"[SELL CHECK] {symbol} | Price: {closes[-1]:.2f} | RSI: {current_rsi:.2f} | SMA: {sma:.2f} | EMA_S: {ema_short:.2f} | EMA_L: {ema_long:.2f} | MACD: {macd_line:.2f}/{macd_signal:.2f} | STOCH: {stoch_k:.2f}/{stoch_d:.2f} | BB: {bb_lower:.2f}/{bb_mid:.2f}/{bb_upper:.2f} | Vol: {volumes[-1]:.2f}/{avg_vol:.2f} | HighTurn: {is_high_turn} | Signal: {signal_strength} | Reason: {sell_reason}")
                                 
                                 if should_sell:
                                     logger.info(f"Selling {symbol} due to {sell_reason} (RSI: {current_rsi:.2f}, ROI: {trade['roi']:.2f}%)")
@@ -750,8 +823,7 @@ async def lifespan(app: FastAPI):
                                         except Exception as e:
                                             logger.error(f"Error auto-rebuying after take profit: {str(e)}")
                                     continue
-                                
-                                # Broadcast update whenever price changes
+                            # Broadcast update whenever price changes
                         await broadcast_trade_update(trade)
                                 
                     except Exception as e:
@@ -1439,30 +1511,82 @@ def calculate_rsi(prices: List[float], period: int = 14) -> float:
     """Calculate RSI (Relative Strength Index) for a list of prices."""
     if len(prices) < period + 1:
         return 50.0  # Return neutral RSI if not enough data
-        
-    # Calculate price changes
     deltas = np.diff(prices)
-    
-    # Separate gains and losses
     gains = np.where(deltas > 0, deltas, 0)
     losses = np.where(deltas < 0, -deltas, 0)
-    
-    # Calculate average gains and losses
     avg_gain = np.mean(gains[:period])
     avg_loss = np.mean(losses[:period])
-    
-    # Calculate subsequent values
     for i in range(period, len(deltas)):
         avg_gain = (avg_gain * (period - 1) + gains[i]) / period
         avg_loss = (avg_loss * (period - 1) + losses[i]) / period
-    
-    # Calculate RS and RSI
     if avg_loss == 0:
         return 100.0
     rs = avg_gain / avg_loss
     rsi = 100 - (100 / (1 + rs))
-    
     return float(rsi)
+
+def calculate_sma(prices: List[float], period: int) -> float:
+    if len(prices) < period:
+        return float(np.mean(prices))  # Return simple average if not enough data
+    return float(np.mean(prices[-period:]))
+
+def calculate_ema(prices: List[float], period: int) -> float:
+    if len(prices) < period:
+        return float(np.mean(prices))  # Return simple average if not enough data
+    ema = np.mean(prices[-period:])
+    multiplier = 2 / (period + 1)
+    for price in reversed(prices[-period:]):
+        ema = (price - ema) * multiplier + ema
+    return ema
+
+def calculate_macd(prices: List[float], fast_period: int, slow_period: int, signal_period: int) -> Tuple[float, float]:
+    ema_fast = calculate_ema(prices, fast_period)
+    ema_slow = calculate_ema(prices, slow_period)
+    macd_line = ema_fast - ema_slow
+    # For signal line, use a simple EMA of the macd_line (not a rolling window)
+    signal_line = calculate_ema([macd_line], signal_period)
+    return macd_line, signal_line
+
+def calculate_stochastic(highs: List[float], lows: List[float], closes: List[float], k_period: int, d_period: int) -> Tuple[float, float]:
+    lowest_low = np.min(lows[-k_period:])
+    highest_high = np.max(highs[-k_period:])
+    k_line = 100 * ((closes[-1] - lowest_low) / (highest_high - lowest_low)) if highest_high != lowest_low else 0.0
+    d_line = calculate_sma([k_line], d_period)
+    return k_line, d_line
+
+def calculate_bollinger_bands(prices: List[float], period: int, num_std: float) -> Tuple[float, float, float]:
+    sma = calculate_sma(prices, period)
+    std_dev = np.std(prices[-period:]) if len(prices) >= period else np.std(prices)
+    upper_band = sma + num_std * std_dev
+    lower_band = sma - num_std * std_dev
+    return upper_band, sma, lower_band
+
+def calculate_average_volume(volumes: List[float], period: int) -> float:
+    return float(np.mean(volumes[-period:])) if len(volumes) >= period else float(np.mean(volumes))
+
+def is_high_turn_point(prices: List[float], window: int) -> bool:
+    if len(prices) < window:
+        return False
+    center = window // 2
+    center_price = prices[-center-1]
+    for i in range(window):
+        if i == center:
+            continue
+        if center_price <= prices[-window + i]:
+            return False
+    return True
+
+def is_low_turn_point(prices: List[float], window: int) -> bool:
+    if len(prices) < window:
+        return False
+    center = window // 2
+    center_price = prices[-center-1]
+    for i in range(window):
+        if i == center:
+            continue
+        if center_price >= prices[-window + i]:
+            return False
+    return True
 
 def print_rsi_status(symbol: str, rsi: float, is_oversold: bool = False):
     """Print RSI status in a clear, visible format."""
@@ -1628,69 +1752,64 @@ async def auto_buy(trade_request: TradeRequest, user: str = Depends(require_auth
 
 # Add this function to monitor and execute pending orders
 async def monitor_pending_orders():
-    """Monitor pending orders and execute them when RSI conditions are met."""
+    """Monitor pending orders and execute them when enhanced buy conditions are met."""
+    from config import SMA_PERIOD, EMA_SHORT_PERIOD, EMA_LONG_PERIOD, MACD_FAST_PERIOD, MACD_SLOW_PERIOD, MACD_SIGNAL_PERIOD, STOCH_K_PERIOD, STOCH_D_PERIOD, BOLLINGER_PERIOD, BOLLINGER_NUM_STD, VOLUME_AVG_PERIOD, VOLUME_CONFIRMATION_MULTIPLIER, TURN_POINT_WINDOW, RSI_CONFIRMATION_LEVEL, RSI_OVERBOUGHT_CONFIRMATION
     while True:
         try:
             for trade in active_trades:
                 if trade["status"] == "Pending" and trade.get("rsi_trigger") is not None:
-                    # Get current RSI
                     symbol = SYMBOL_MAPPING.get(trade["coin"].lower())
                     if not symbol:
                         continue
-                        
                     klines = binance_client.get_klines(
                         symbol=symbol,
                         interval=Client.KLINE_INTERVAL_1HOUR,
                         limit=100
                     )
-                    logger.info(f"Monitor: Successfully retrieved {len(klines)} klines for {symbol}. First 5 klines: {klines[:5]}")
-
-                    prices = [float(k[4]) for k in klines]
-                    logger.info(f"Monitor: Extracted {len(prices)} closing prices for {symbol}. First 5 prices: {prices[:5]}")
-
-                    current_rsi = calculate_rsi(prices)
-                    logger.info(f"Monitor: Calculated RSI for {symbol}: {current_rsi:.2f}")
-                    
-                    # Update current RSI in trade data
+                    closes = [float(k[4]) for k in klines]
+                    highs = [float(k[2]) for k in klines]
+                    lows = [float(k[3]) for k in klines]
+                    volumes = [float(k[5]) for k in klines]
+                    current_rsi = calculate_rsi(closes)
                     trade["current_rsi"] = current_rsi
-                    
-                    # Print RSI status to console
-                    print_rsi_status(symbol, current_rsi, current_rsi < trade["rsi_trigger"])
-                    
-                    # If RSI is below trigger, execute the order
-                    if current_rsi < trade["rsi_trigger"]:
+                    sma = calculate_sma(closes, SMA_PERIOD)
+                    ema_short = calculate_ema(closes, EMA_SHORT_PERIOD)
+                    ema_long = calculate_ema(closes, EMA_LONG_PERIOD)
+                    macd_line, macd_signal = calculate_macd(closes, MACD_FAST_PERIOD, MACD_SLOW_PERIOD, MACD_SIGNAL_PERIOD)
+                    stoch_k, stoch_d = calculate_stochastic(highs, lows, closes, STOCH_K_PERIOD, STOCH_D_PERIOD)
+                    bb_upper, bb_mid, bb_lower = calculate_bollinger_bands(closes, BOLLINGER_PERIOD, BOLLINGER_NUM_STD)
+                    avg_vol = calculate_average_volume(volumes, VOLUME_AVG_PERIOD)
+                    vol_confirm = volumes[-1] > VOLUME_CONFIRMATION_MULTIPLIER * avg_vol if avg_vol > 0 else False
+                    is_low_turn = is_low_turn_point(closes, TURN_POINT_WINDOW)
+                    # --- Buy Logic: Match backtest.py (RSI only) ---
+                    should_buy = False
+                    buy_reason = ""
+                    if current_rsi < RSI_OVERSOLD:
+                        should_buy = True
+                        buy_reason = f"RSI < {RSI_OVERSOLD}"
+                    # Log all indicator values and signal strength
+                    logger.info(f"[BUY CHECK] {symbol} | Price: {closes[-1]:.2f} | RSI: {current_rsi:.2f} | Reason: {buy_reason}")
+                    if should_buy:
                         try:
-                            # Execute market order
                             order = await execute_binance_order(
                                 symbol=symbol,
                                 side='BUY',
                                 order_type='MARKET',
                                 quantity=trade["quantity"]
                             )
-                            
-                            # Update trade with order details
                             trade["status"] = "Open"
                             trade["binance_order_id"] = order['orderId']
                             trade["entry_price"] = float(order['fills'][0]['price'])
-                            trade["current_price"] = float(order['fills'][0]['price']) # Set current price to entry price on execution
+                            trade["current_price"] = float(order['fills'][0]['price'])
                             trade["fees"] = sum(float(fill['commission']) for fill in order['fills'])
-                            
-                            # Save updated trades
                             save_trades()
-                            
-                            # Broadcast update
                             await broadcast_trade_update(trade)
-                            
-                            logger.info(f"Executed pending order for {symbol} at RSI {current_rsi:.2f}")
-                            
+                            logger.info(f"Executed pending order for {symbol} at RSI {current_rsi:.2f} | Reason: {buy_reason}")
                         except Exception as e:
                             logger.error(f"Error executing pending order: {str(e)}")
-                            
         except Exception as e:
             logger.error(f"Error in monitor_pending_orders: {str(e)}")
-            
-        # Wait before next check
-        await asyncio.sleep(10)  # Check every 5 seconds for faster RSI monitoring
+        await asyncio.sleep(10)  # Check every 10 seconds
 
 @app.on_event("startup")
 async def startup_event():
