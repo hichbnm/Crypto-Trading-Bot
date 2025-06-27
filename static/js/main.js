@@ -822,8 +822,12 @@ document.addEventListener('DOMContentLoaded', function() {
     if (toggleChartBtn && tradeChartDiv) {
         // Add smooth transition
         tradeChartDiv.style.transition = 'opacity 0.4s';
-        // Restore state from localStorage
-        const chartVisible = localStorage.getItem('chartVisible');
+        // Set default to hidden if not set in localStorage
+        let chartVisible = localStorage.getItem('chartVisible');
+        if (chartVisible === null) {
+            chartVisible = 'false';
+            localStorage.setItem('chartVisible', 'false');
+        }
         if (chartVisible === 'false') {
             tradeChartDiv.style.opacity = 0;
             tradeChartDiv.style.pointerEvents = 'none';
@@ -1034,27 +1038,62 @@ async function plotTradeChart() {
     // --- Buy/Sell markers ---
     const allBuys = [];
     const allSells = [];
-    function addMarkers(trades, isHistory) {
+    function findClosestTime(targetTime, times) {
+        let minDiff = Infinity;
+        let closest = times[0];
+        for (let t of times) {
+            let diff = Math.abs(new Date(t) - new Date(targetTime));
+            if (diff < minDiff) {
+                minDiff = diff;
+                closest = t;
+            }
+        }
+        return closest;
+    }
+    function addMarkers(trades, isHistory, times, closes) {
         if (!Array.isArray(trades)) {
             console.warn('addMarkers called with non-array:', trades);
             return;
         }
         trades.forEach(trade => {
-            if (trade.type === 'BUY' || (!isHistory && trade.status === 'Open')) {
-                allBuys.push({
-                    time: trade.entry_time || trade.time,
-                    price: trade.entry_price || trade.price
-                });
-            } else if (trade.type === 'SELL' || (isHistory && trade.status === 'Closed')) {
-                allSells.push({
-                    time: trade.exit_time || trade.time,
-                    price: trade.exit_price || trade.price
-                });
+            if (isHistory && trade.status === 'Closed') {
+                if (trade.entry_time && trade.entry_price) {
+                    const closestTime = findClosestTime(trade.entry_time, times);
+                    const idx = times.indexOf(closestTime);
+                    allBuys.push({
+                        time: closestTime,
+                        price: closes[idx]
+                    });
+                }
+                if (trade.exit_time && trade.exit_price) {
+                    const closestTime = findClosestTime(trade.exit_time, times);
+                    const idx = times.indexOf(closestTime);
+                    allSells.push({
+                        time: closestTime,
+                        price: closes[idx]
+                    });
+                }
+            } else {
+                if (trade.type === 'BUY' || (!isHistory && trade.status === 'Open')) {
+                    const closestTime = findClosestTime(trade.entry_time || trade.time, times);
+                    const idx = times.indexOf(closestTime);
+                    allBuys.push({
+                        time: closestTime,
+                        price: closes[idx]
+                    });
+                } else if (trade.type === 'SELL' || (isHistory && trade.status === 'Closed')) {
+                    const closestTime = findClosestTime(trade.exit_time || trade.time, times);
+                    const idx = times.indexOf(closestTime);
+                    allSells.push({
+                        time: closestTime,
+                        price: closes[idx]
+                    });
+                }
             }
         });
     }
-    addMarkers(Array.isArray(activeTrades) ? activeTrades : [], false);
-    addMarkers(Array.isArray(tradeHistory) ? tradeHistory : [], true);
+    addMarkers(Array.isArray(activeTrades) ? activeTrades : [], false, times, closes);
+    addMarkers(Array.isArray(tradeHistory) ? tradeHistory : [], true, times, closes);
 
     const buyMarkers = {
         x: allBuys.map(t => t.time),
