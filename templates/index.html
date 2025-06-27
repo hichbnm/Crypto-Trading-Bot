@@ -642,6 +642,8 @@
             </div>
 
             <div class="trade-report">
+                <button id="toggleChartBtn" style="margin-bottom: 1rem;">Hide Chart</button>
+                <div id="tradeChart" style="width:100%;height:500px;margin-bottom:2rem;"></div>
                 <h2>Active Trades</h2>
                 <table id="tradesTable">
                     <thead>
@@ -706,6 +708,7 @@
     </main>
 
     <script src="{{ url_for('static', path='/js/main.js') }}"></script>
+    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
     <script>
         // Add this at the beginning of your script section
         const activeTradesMap = new Map();

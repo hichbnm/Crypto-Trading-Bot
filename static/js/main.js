@@ -815,6 +815,49 @@ document.addEventListener('DOMContentLoaded', function() {
     // Fetch active trades count from backend and update header
     fetchAndUpdateActiveTradesCount();
     setInterval(fetchAndUpdateActiveTradesCount, 10000); // update every 10s
+
+    // Chart toggle button logic
+    const toggleChartBtn = document.getElementById('toggleChartBtn');
+    const tradeChartDiv = document.getElementById('tradeChart');
+    if (toggleChartBtn && tradeChartDiv) {
+        // Add smooth transition
+        tradeChartDiv.style.transition = 'opacity 0.4s';
+        // Restore state from localStorage
+        const chartVisible = localStorage.getItem('chartVisible');
+        if (chartVisible === 'false') {
+            tradeChartDiv.style.opacity = 0;
+            tradeChartDiv.style.pointerEvents = 'none';
+            setTimeout(() => { tradeChartDiv.style.display = 'none'; }, 400);
+            toggleChartBtn.textContent = 'Show Chart';
+        } else {
+            tradeChartDiv.style.opacity = 1;
+            tradeChartDiv.style.pointerEvents = '';
+            tradeChartDiv.style.display = '';
+            toggleChartBtn.textContent = 'Hide Chart';
+        }
+        toggleChartBtn.addEventListener('click', function() {
+            if (tradeChartDiv.style.display === 'none' || tradeChartDiv.style.opacity === '0') {
+                tradeChartDiv.style.display = '';
+                setTimeout(() => {
+                    tradeChartDiv.style.opacity = 1;
+                    tradeChartDiv.style.pointerEvents = '';
+                    if (window.Plotly && window.Plotly.Plots && typeof window.Plotly.Plots.resize === 'function') {
+                        Plotly.Plots.resize(tradeChartDiv);
+                    }
+                }, 10);
+                toggleChartBtn.textContent = 'Hide Chart';
+                localStorage.setItem('chartVisible', 'true');
+            } else {
+                tradeChartDiv.style.opacity = 0;
+                tradeChartDiv.style.pointerEvents = 'none';
+                setTimeout(() => {
+                    tradeChartDiv.style.display = 'none';
+                }, 400);
+                toggleChartBtn.textContent = 'Show Chart';
+                localStorage.setItem('chartVisible', 'false');
+            }
+        });
+    }
 });
 
 // Add this function after the existing functions
@@ -911,4 +954,185 @@ async function fetchAndUpdateActiveTradesCount() {
     } catch (e) {
         // Optionally log error
     }
-} 
+}
+
+async function fetchActiveTrades() {
+    const response = await fetch('/active-trades');
+    const data = await response.json();
+    return Array.isArray(data) ? data : [];
+}
+
+async function fetchTradeHistory() {
+    const response = await fetch('/trade-history');
+    const data = await response.json();
+    return Array.isArray(data) ? data : [];
+}
+
+async function fetchPriceHistory(symbol) {
+    const response = await fetch(`/price-history?symbol=${symbol}`);
+    return response.json();
+}
+
+async function plotTradeChart() {
+    // Use the selected coin or default to BTCUSDT
+    const coinSelect = document.getElementById('coin');
+    let symbol = 'BTCUSDT';
+    if (coinSelect && coinSelect.value) {
+        // Map coin name to symbol (should match backend logic)
+        const mapping = {
+            bitcoin: 'BTCUSDT',
+            ethereum: 'ETHUSDT',
+            binancecoin: 'BNBUSDT',
+            ripple: 'XRPUSDT',
+            dogecoin: 'DOGEUSDT',
+            polygon: 'MATICUSDT',
+            chainlink: 'LINKUSDT'
+        };
+        symbol = mapping[coinSelect.value] || 'BTCUSDT';
+    }
+    const [activeTrades, tradeHistory, priceData] = await Promise.all([
+        fetchActiveTrades(),
+        fetchTradeHistory(),
+        fetchPriceHistory(symbol)
+    ]);
+
+    // --- Prepare smooth single line chart data ---
+    const closes = priceData.closes;
+    const times = priceData.times;
+    const volumes = priceData.volumes || [];
+    const volColors = [];
+    for (let i = 1; i < closes.length; i++) {
+        if (closes[i] >= closes[i - 1]) {
+            volColors.push('rgba(38,166,154,0.7)'); // green
+        } else {
+            volColors.push('rgba(239,83,80,0.7)'); // red
+        }
+    }
+    volColors.unshift(volColors[0] || 'rgba(38,166,154,0.7)'); // pad for alignment
+
+    const priceTrace = {
+        x: times,
+        y: closes,
+        mode: 'lines',
+        line: { color: '#26a69a', width: 2 },
+        name: 'Price',
+        hovertemplate: '<b>%{x}</b><br>Price: <b>$%{y:,.2f}</b><extra></extra>',
+        connectgaps: true
+    };
+    // --- Volume bars ---
+    const volumeTrace = {
+        x: times,
+        y: volumes,
+        type: 'bar',
+        yaxis: 'y2',
+        marker: { color: volColors, opacity: 0.5 },
+        name: 'Volume',
+        opacity: 0.5,
+        hovertemplate: 'Volume: <b>%{y:,.0f}</b><br>Time: %{x}<extra></extra>'
+    };
+
+    // --- Buy/Sell markers ---
+    const allBuys = [];
+    const allSells = [];
+    function addMarkers(trades, isHistory) {
+        if (!Array.isArray(trades)) {
+            console.warn('addMarkers called with non-array:', trades);
+            return;
+        }
+        trades.forEach(trade => {
+            if (trade.type === 'BUY' || (!isHistory && trade.status === 'Open')) {
+                allBuys.push({
+                    time: trade.entry_time || trade.time,
+                    price: trade.entry_price || trade.price
+                });
+            } else if (trade.type === 'SELL' || (isHistory && trade.status === 'Closed')) {
+                allSells.push({
+                    time: trade.exit_time || trade.time,
+                    price: trade.exit_price || trade.price
+                });
+            }
+        });
+    }
+    addMarkers(Array.isArray(activeTrades) ? activeTrades : [], false);
+    addMarkers(Array.isArray(tradeHistory) ? tradeHistory : [], true);
+
+    const buyMarkers = {
+        x: allBuys.map(t => t.time),
+        y: allBuys.map(t => t.price),
+        mode: 'markers+text',
+        marker: { color: 'limegreen', size: 16, symbol: 'triangle-up' },
+        name: 'Buy',
+        text: allBuys.map(() => 'Buy'),
+        textposition: 'top center',
+        hovertemplate: 'Buy<br>Price: <b>$%{y:,.2f}</b><br>Time: %{x}<extra></extra>'
+    };
+    const sellMarkers = {
+        x: allSells.map(t => t.time),
+        y: allSells.map(t => t.price),
+        mode: 'markers+text',
+        marker: { color: 'red', size: 16, symbol: 'triangle-down' },
+        name: 'Sell',
+        text: allSells.map(() => 'Sell'),
+        textposition: 'bottom center',
+        hovertemplate: 'Sell<br>Price: <b>$%{y:,.2f}</b><br>Time: %{x}<extra></extra>'
+    };
+
+    const data = [priceTrace, buyMarkers, sellMarkers, volumeTrace];
+
+    Plotly.newPlot('tradeChart', data, {
+        title: '',
+        plot_bgcolor: '#fff',
+        paper_bgcolor: '#fff',
+        font: { color: '#222' },
+        xaxis: {
+            title: '',
+            type: 'date',
+            gridcolor: '#eee',
+            showgrid: true,
+            zeroline: false,
+            showline: false,
+            tickformat: '%d %b %H:%M',
+            rangeslider: { visible: false },
+            showspikes: true,
+            spikemode: 'across',
+            spikecolor: '#aaa',
+            spikethickness: 1
+        },
+        yaxis: {
+            title: '',
+            gridcolor: '#eee',
+            showgrid: true,
+            zeroline: false,
+            showline: false,
+            tickprefix: '$',
+            showspikes: true,
+            spikemode: 'across',
+            spikecolor: '#aaa',
+            spikethickness: 1
+        },
+        yaxis2: {
+            title: '',
+            overlaying: 'y',
+            side: 'right',
+            showgrid: false,
+            rangemode: 'tozero',
+            fixedrange: true
+        },
+        dragmode: 'pan',
+        showlegend: false,
+        hovermode: 'x unified',
+        hoverlabel: {
+            bgcolor: '#fff',
+            bordercolor: '#26a69a',
+            font: { color: '#222', size: 14, family: 'Segoe UI, sans-serif' }
+        },
+        margin: { t: 20, b: 40, l: 40, r: 20 },
+        responsive: true,
+        scrollZoom: true,
+        displayModeBar: true,
+        displaylogo: false,
+        modeBarButtonsToRemove: ['autoScale2d', 'resetScale2d', 'lasso2d', 'select2d']
+    });
+}
+
+document.addEventListener('DOMContentLoaded', plotTradeChart); 

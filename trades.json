@@ -1,5 +1,27 @@
 {
-  "active_trades": [],
+  "active_trades": [
+    {
+      "id": "0a40bf72-3f88-44d7-9d1a-277f1ba0723f",
+      "coin": "bitcoin",
+      "amount_usdt": 6.0,
+      "quantity": 6e-05,
+      "order_type": "market",
+      "entry_price": 106711.13,
+      "current_price": 106711.12,
+      "status": "Open",
+      "limit_price": null,
+      "entry_time": "2025-06-27 14:05:50",
+      "profit_loss": 0.0,
+      "fees": 0.01,
+      "roi": 0.0,
+      "binance_order_id": 45348132407,
+      "take_profit": 10.0,
+      "take_profit_type": "percentage",
+      "take_profit_price": 117382.24300000002,
+      "stop_loss": null,
+      "auto_buy_loop": true
+    }
+  ],
   "trade_history": [
     {
       "id": "539e7562-1f82-4f50-b39b-93b311fb54e3",

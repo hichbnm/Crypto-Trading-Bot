@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Form, HTTPException, WebSocket, Request, Depends, Response
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -1817,6 +1817,29 @@ async def startup_event():
     asyncio.create_task(monitor_trades())
     asyncio.create_task(monitor_pending_orders())
     logger.info("Background tasks started")
+
+@app.get("/price-history")
+async def get_price_history(symbol: str = 'BTCUSDT', limit: int = 500):
+    """Return OHLCV price history for the given symbol (default: last 500 1h candles)."""
+    try:
+        klines = binance_client.get_klines(symbol=symbol, interval=Client.KLINE_INTERVAL_1HOUR, limit=limit)
+        times = [datetime.fromtimestamp(k[0] / 1000).isoformat() for k in klines]
+        opens = [float(k[1]) for k in klines]
+        highs = [float(k[2]) for k in klines]
+        lows = [float(k[3]) for k in klines]
+        closes = [float(k[4]) for k in klines]
+        volumes = [float(k[5]) for k in klines]
+        return JSONResponse({
+            "times": times,
+            "opens": opens,
+            "highs": highs,
+            "lows": lows,
+            "closes": closes,
+            "volumes": volumes
+        })
+    except Exception as e:
+        logger.error(f"Error fetching price history: {str(e)}")
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Run the FastAPI application')
