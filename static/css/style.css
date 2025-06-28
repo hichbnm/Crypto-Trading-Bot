@@ -542,5 +542,7 @@ tr:hover {
 }
 
 .stop-loss-container label[for="enable_stop_loss"] {
-    margin-bottom: 0;
+    display: inline-block;
+    margin-left: 0.5rem;
+    font-weight: normal;
 } 

@@ -70,6 +70,17 @@ const activeTradesMap = new Map(); // Keep track of active trades
 let enableStopLossCheckbox;
 let stopLossInput;
 
+// Symbol mapping for chart functionality
+const SYMBOL_MAPPING = {
+    "bitcoin": "BTCUSDT",
+    "ethereum": "ETHUSDT",
+    "binancecoin": "BNBUSDT",
+    "ripple": "XRPUSDT",
+    "dogecoin": "DOGEUSDT",
+    "polygon": "MATICUSDT",
+    "chainlink": "LINKUSDT"
+};
+
 // DOM Elements
 const connectionStatus = document.getElementById('connection-status');
 const activeTradesCount = document.getElementById('active-trades-count');
@@ -973,205 +984,298 @@ async function fetchTradeHistory() {
 }
 
 async function fetchPriceHistory(symbol) {
-    const response = await fetch(`/price-history?symbol=${symbol}`);
-    return response.json();
+    try {
+        console.log(`Fetching price history for ${symbol}...`);
+        const response = await fetch(`/price-history?symbol=${symbol}`);
+        console.log(`Response status for ${symbol}:`, response.status);
+        
+        if (!response.ok) {
+            console.error(`Error fetching price history for ${symbol}:`, response.status, response.statusText);
+            return null;
+        }
+        
+        const data = await response.json();
+        console.log(`Received price data for ${symbol}:`, data ? 'success' : 'failed');
+        return data;
+    } catch (error) {
+        console.error(`Error fetching price history for ${symbol}:`, error);
+        return null;
+    }
+}
+
+// Test function to verify chart is working
+function testChart() {
+    console.log('Testing chart functionality...');
+    const testData = [
+        {
+            x: ['2024-01-01', '2024-01-02', '2024-01-03'],
+            y: [100, 110, 105],
+            mode: 'lines',
+            name: 'Test BTC',
+            line: { color: '#26a69a', width: 2 }
+        }
+    ];
+    
+    const layout = {
+        title: 'Test Chart',
+        xaxis: { title: 'Time' },
+        yaxis: { title: 'Price' }
+    };
+    
+    try {
+        Plotly.newPlot('tradeChart', testData, layout);
+        console.log('Test chart created successfully!');
+        return true;
+    } catch (error) {
+        console.error('Error creating test chart:', error);
+        return false;
+    }
 }
 
 async function plotTradeChart() {
-    // Use the selected coin or default to BTCUSDT
-    const coinSelect = document.getElementById('coin');
-    let symbol = 'BTCUSDT';
-    if (coinSelect && coinSelect.value) {
-        // Map coin name to symbol (should match backend logic)
-        const mapping = {
-            bitcoin: 'BTCUSDT',
-            ethereum: 'ETHUSDT',
-            binancecoin: 'BNBUSDT',
-            ripple: 'XRPUSDT',
-            dogecoin: 'DOGEUSDT',
-            polygon: 'MATICUSDT',
-            chainlink: 'LINKUSDT'
-        };
-        symbol = mapping[coinSelect.value] || 'BTCUSDT';
-    }
-    const [activeTrades, tradeHistory, priceData] = await Promise.all([
+    console.log('plotTradeChart function called');
+    
+    // Always use BTC for the chart
+    const symbol = 'BTCUSDT';
+    console.log('Using symbol:', symbol);
+
+    // Color for BTC
+    const color = '#26a69a'; // BTC - Teal
+
+    // Fetch data
+    const [activeTrades, tradeHistory] = await Promise.all([
         fetchActiveTrades(),
-        fetchTradeHistory(),
-        fetchPriceHistory(symbol)
+        fetchTradeHistory()
     ]);
 
-    // --- Prepare smooth single line chart data ---
-    const closes = priceData.closes;
-    const times = priceData.times;
-    const volumes = priceData.volumes || [];
-    const volColors = [];
-    for (let i = 1; i < closes.length; i++) {
-        if (closes[i] >= closes[i - 1]) {
-            volColors.push('rgba(38,166,154,0.7)'); // green
-        } else {
-            volColors.push('rgba(239,83,80,0.7)'); // red
-        }
-    }
-    volColors.unshift(volColors[0] || 'rgba(38,166,154,0.7)'); // pad for alignment
+    console.log('Fetched active trades:', activeTrades.length);
+    console.log('Fetched trade history:', tradeHistory.length);
 
-    const priceTrace = {
-        x: times,
-        y: closes,
-        mode: 'lines',
-        line: { color: '#26a69a', width: 2 },
-        name: 'Price',
-        hovertemplate: '<b>%{x}</b><br>Price: <b>$%{y:,.2f}</b><extra></extra>',
-        connectgaps: true
-    };
-    // --- Volume bars ---
-    const volumeTrace = {
-        x: times,
-        y: volumes,
-        type: 'bar',
-        yaxis: 'y2',
-        marker: { color: volColors, opacity: 0.5 },
-        name: 'Volume',
-        opacity: 0.5,
-        hovertemplate: 'Volume: <b>%{y:,.0f}</b><br>Time: %{x}<extra></extra>'
-    };
-
-    // --- Buy/Sell markers ---
-    const allBuys = [];
-    const allSells = [];
-    function findClosestTime(targetTime, times) {
-        let minDiff = Infinity;
-        let closest = times[0];
-        for (let t of times) {
-            let diff = Math.abs(new Date(t) - new Date(targetTime));
-            if (diff < minDiff) {
-                minDiff = diff;
-                closest = t;
-            }
-        }
-        return closest;
-    }
-    function addMarkers(trades, isHistory, times, closes) {
-        if (!Array.isArray(trades)) {
-            console.warn('addMarkers called with non-array:', trades);
+    try {
+        // Fetch price data for BTC
+        const priceData = await fetchPriceHistory(symbol);
+        console.log('Price data for BTC:', priceData ? 'received' : 'failed');
+        
+        if (!priceData || !priceData.closes || priceData.closes.length === 0) {
+            console.warn('No price data available for BTC');
             return;
         }
-        trades.forEach(trade => {
-            if (isHistory && trade.status === 'Closed') {
-                if (trade.entry_time && trade.entry_price) {
-                    const closestTime = findClosestTime(trade.entry_time, times);
-                    const idx = times.indexOf(closestTime);
-                    allBuys.push({
-                        time: closestTime,
-                        price: closes[idx]
-                    });
-                }
-                if (trade.exit_time && trade.exit_price) {
-                    const closestTime = findClosestTime(trade.exit_time, times);
-                    const idx = times.indexOf(closestTime);
-                    allSells.push({
-                        time: closestTime,
-                        price: closes[idx]
-                    });
-                }
-            } else {
-                if (trade.type === 'BUY' || (!isHistory && trade.status === 'Open')) {
-                    const closestTime = findClosestTime(trade.entry_time || trade.time, times);
-                    const idx = times.indexOf(closestTime);
-                    allBuys.push({
-                        time: closestTime,
-                        price: closes[idx]
-                    });
-                } else if (trade.type === 'SELL' || (isHistory && trade.status === 'Closed')) {
-                    const closestTime = findClosestTime(trade.exit_time || trade.time, times);
-                    const idx = times.indexOf(closestTime);
-                    allSells.push({
-                        time: closestTime,
-                        price: closes[idx]
-                    });
+
+        const closes = priceData.closes;
+        const times = priceData.times;
+        const volumes = priceData.volumes || [];
+        
+        console.log('BTC data points:', closes.length);
+        
+        // Create price trace for BTC
+        const priceTrace = {
+            x: times,
+            y: closes,
+            mode: 'lines',
+            line: { color: color, width: 2 },
+            name: 'Bitcoin (BTC)',
+            hovertemplate: '<b>Bitcoin (BTC)</b><br>Time: %{x}<br>Price: <b>$%{y:,.2f}</b><extra></extra>',
+            connectgaps: true
+        };
+
+        // Create volume trace for BTC
+        const volumeTrace = {
+            x: times,
+            y: volumes,
+            type: 'bar',
+            yaxis: 'y2',
+            marker: { color: 'rgba(38, 166, 154, 0.3)', opacity: 0.2 },
+            name: 'BTC Volume',
+            opacity: 0.2,
+            hovertemplate: 'BTC Volume: <b>%{y:,.0f}</b><br>Time: %{x}<extra></extra>',
+            showlegend: false
+        };
+
+        // Add buy/sell markers for BTC
+        const coinBuys = [];
+        const coinSells = [];
+
+        function findClosestTime(targetTime, times) {
+            let minDiff = Infinity;
+            let closest = times[0];
+            for (let t of times) {
+                let diff = Math.abs(new Date(t) - new Date(targetTime));
+                if (diff < minDiff) {
+                    minDiff = diff;
+                    closest = t;
                 }
             }
+            return closest;
+        }
+
+        function addMarkersForCoin(trades, isHistory, times, closes, coinSymbol) {
+            if (!Array.isArray(trades)) {
+                return;
+            }
+            trades.forEach(trade => {
+                // Only process trades for BTC
+                const tradeSymbol = SYMBOL_MAPPING[trade.coin?.toLowerCase()] || trade.coin;
+                if (tradeSymbol !== coinSymbol) return;
+
+                if (isHistory && trade.status === 'Closed') {
+                    if (trade.entry_time && trade.entry_price) {
+                        const closestTime = findClosestTime(trade.entry_time, times);
+                        const idx = times.indexOf(closestTime);
+                        if (idx >= 0) {
+                            coinBuys.push({
+                                time: closestTime,
+                                price: closes[idx]
+                            });
+                        }
+                    }
+                    if (trade.exit_time && trade.exit_price) {
+                        const closestTime = findClosestTime(trade.exit_time, times);
+                        const idx = times.indexOf(closestTime);
+                        if (idx >= 0) {
+                            coinSells.push({
+                                time: closestTime,
+                                price: closes[idx]
+                            });
+                        }
+                    }
+                } else {
+                    if (trade.type === 'BUY' || (!isHistory && trade.status === 'Open')) {
+                        const closestTime = findClosestTime(trade.entry_time || trade.time, times);
+                        const idx = times.indexOf(closestTime);
+                        if (idx >= 0) {
+                            coinBuys.push({
+                                time: closestTime,
+                                price: closes[idx]
+                            });
+                        }
+                    } else if (trade.type === 'SELL' || (isHistory && trade.status === 'Closed')) {
+                        const closestTime = findClosestTime(trade.exit_time || trade.time, times);
+                        const idx = times.indexOf(closestTime);
+                        if (idx >= 0) {
+                            coinSells.push({
+                                time: closestTime,
+                                price: closes[idx]
+                            });
+                        }
+                    }
+                }
+            });
+        }
+
+        addMarkersForCoin(Array.isArray(activeTrades) ? activeTrades : [], false, times, closes, symbol);
+        addMarkersForCoin(Array.isArray(tradeHistory) ? tradeHistory : [], true, times, closes, symbol);
+
+        console.log('BTC buy markers:', coinBuys.length);
+        console.log('BTC sell markers:', coinSells.length);
+
+        // Create buy markers for BTC
+        const buyMarkers = {
+            x: coinBuys.map(t => t.time),
+            y: coinBuys.map(t => t.price),
+            mode: 'markers+text',
+            marker: { color: 'limegreen', size: 12, symbol: 'triangle-up' },
+            name: 'BTC Buy',
+            text: coinBuys.map(() => 'Buy'),
+            textposition: 'top center',
+            hovertemplate: 'BTC Buy<br>Price: <b>$%{y:,.2f}</b><br>Time: %{x}<extra></extra>',
+            showlegend: false
+        };
+
+        // Create sell markers for BTC
+        const sellMarkers = {
+            x: coinSells.map(t => t.time),
+            y: coinSells.map(t => t.price),
+            mode: 'markers+text',
+            marker: { color: 'red', size: 12, symbol: 'triangle-down' },
+            name: 'BTC Sell',
+            text: coinSells.map(() => 'Sell'),
+            textposition: 'bottom center',
+            hovertemplate: 'BTC Sell<br>Price: <b>$%{y:,.2f}</b><br>Time: %{x}<extra></extra>',
+            showlegend: false
+        };
+
+        // Combine all traces
+        const allData = [priceTrace, buyMarkers, sellMarkers, volumeTrace];
+        console.log('Total traces to plot:', allData.length);
+
+        // Check if chart container exists
+        const chartContainer = document.getElementById('tradeChart');
+        if (!chartContainer) {
+            console.error('Chart container not found!');
+            return;
+        }
+
+        console.log('Creating BTC chart...');
+
+        // Create the chart
+        Plotly.newPlot('tradeChart', allData, {
+            title: {
+                text: 'Bitcoin (BTC) Price Chart',
+                font: { size: 16, color: '#2c3e50' }
+            },
+            plot_bgcolor: '#fff',
+            paper_bgcolor: '#fff',
+            font: { color: '#222' },
+            xaxis: {
+                title: '',
+                type: 'date',
+                gridcolor: '#eee',
+                showgrid: true,
+                zeroline: false,
+                showline: false,
+                tickformat: '%d %b %H:%M',
+                rangeslider: { visible: false },
+                showspikes: true,
+                spikemode: 'across',
+                spikecolor: '#aaa',
+                spikethickness: 1
+            },
+            yaxis: {
+                title: 'Price (USD)',
+                gridcolor: '#eee',
+                showgrid: true,
+                zeroline: false,
+                showline: false,
+                tickprefix: '$',
+                showspikes: true,
+                spikemode: 'across',
+                spikecolor: '#aaa',
+                spikethickness: 1
+            },
+            yaxis2: {
+                title: 'Volume',
+                overlaying: 'y',
+                side: 'right',
+                showgrid: false,
+                rangemode: 'tozero',
+                fixedrange: true
+            },
+            dragmode: 'pan',
+            showlegend: true,
+            legend: {
+                x: 0.02,
+                y: 0.98,
+                bgcolor: 'rgba(255,255,255,0.8)',
+                bordercolor: '#ddd',
+                borderwidth: 1
+            },
+            hovermode: 'x unified',
+            hoverlabel: {
+                bgcolor: '#fff',
+                bordercolor: '#26a69a',
+                font: { color: '#222', size: 14, family: 'Segoe UI, sans-serif' }
+            },
+            margin: { t: 40, b: 40, l: 60, r: 60 },
+            responsive: true,
+            scrollZoom: true,
+            displayModeBar: true,
+            displaylogo: false,
+            modeBarButtonsToRemove: ['autoScale2d', 'resetScale2d', 'lasso2d', 'select2d']
         });
+        console.log('BTC chart created successfully!');
+    } catch (error) {
+        console.error('Error creating BTC chart:', error);
     }
-    addMarkers(Array.isArray(activeTrades) ? activeTrades : [], false, times, closes);
-    addMarkers(Array.isArray(tradeHistory) ? tradeHistory : [], true, times, closes);
-
-    const buyMarkers = {
-        x: allBuys.map(t => t.time),
-        y: allBuys.map(t => t.price),
-        mode: 'markers+text',
-        marker: { color: 'limegreen', size: 16, symbol: 'triangle-up' },
-        name: 'Buy',
-        text: allBuys.map(() => 'Buy'),
-        textposition: 'top center',
-        hovertemplate: 'Buy<br>Price: <b>$%{y:,.2f}</b><br>Time: %{x}<extra></extra>'
-    };
-    const sellMarkers = {
-        x: allSells.map(t => t.time),
-        y: allSells.map(t => t.price),
-        mode: 'markers+text',
-        marker: { color: 'red', size: 16, symbol: 'triangle-down' },
-        name: 'Sell',
-        text: allSells.map(() => 'Sell'),
-        textposition: 'bottom center',
-        hovertemplate: 'Sell<br>Price: <b>$%{y:,.2f}</b><br>Time: %{x}<extra></extra>'
-    };
-
-    const data = [priceTrace, buyMarkers, sellMarkers, volumeTrace];
-
-    Plotly.newPlot('tradeChart', data, {
-        title: '',
-        plot_bgcolor: '#fff',
-        paper_bgcolor: '#fff',
-        font: { color: '#222' },
-        xaxis: {
-            title: '',
-            type: 'date',
-            gridcolor: '#eee',
-            showgrid: true,
-            zeroline: false,
-            showline: false,
-            tickformat: '%d %b %H:%M',
-            rangeslider: { visible: false },
-            showspikes: true,
-            spikemode: 'across',
-            spikecolor: '#aaa',
-            spikethickness: 1
-        },
-        yaxis: {
-            title: '',
-            gridcolor: '#eee',
-            showgrid: true,
-            zeroline: false,
-            showline: false,
-            tickprefix: '$',
-            showspikes: true,
-            spikemode: 'across',
-            spikecolor: '#aaa',
-            spikethickness: 1
-        },
-        yaxis2: {
-            title: '',
-            overlaying: 'y',
-            side: 'right',
-            showgrid: false,
-            rangemode: 'tozero',
-            fixedrange: true
-        },
-        dragmode: 'pan',
-        showlegend: false,
-        hovermode: 'x unified',
-        hoverlabel: {
-            bgcolor: '#fff',
-            bordercolor: '#26a69a',
-            font: { color: '#222', size: 14, family: 'Segoe UI, sans-serif' }
-        },
-        margin: { t: 20, b: 40, l: 40, r: 20 },
-        responsive: true,
-        scrollZoom: true,
-        displayModeBar: true,
-        displaylogo: false,
-        modeBarButtonsToRemove: ['autoScale2d', 'resetScale2d', 'lasso2d', 'select2d']
-    });
 }
 
 document.addEventListener('DOMContentLoaded', plotTradeChart); 

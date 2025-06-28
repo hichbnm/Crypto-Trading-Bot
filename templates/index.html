@@ -643,7 +643,9 @@
 
             <div class="trade-report">
                 <button id="toggleChartBtn" style="margin-bottom: 1rem;">Hide Chart</button>
+                
                 <div id="tradeChart" style="width:100%;height:500px;margin-bottom:2rem;"></div>
+
                 <h2>Active Trades</h2>
                 <table id="tradesTable">
                     <thead>
@@ -808,11 +810,35 @@
                 const data = JSON.parse(event.data);
                 if (data.type === 'trade_update') {
                     updateActiveTradesTable(data.trades);
+                    
+                    // Auto-refresh chart when trade data changes
+                    try {
+                        const chartContainer = document.getElementById('tradeChart');
+                        if (chartContainer && chartContainer.style.display !== 'none' && chartContainer.style.opacity !== '0') {
+                            console.log('Auto-refreshing chart due to trade update');
+                            plotTradeChart();
+                        }
+                    } catch (error) {
+                        console.error('Error auto-refreshing chart:', error);
+                    }
                 }
             };
             ws.onclose = function() {
                 console.log('WebSocket connection closed');
             };
+
+            // Set up periodic chart refresh (every 30 seconds)
+            setInterval(function() {
+                try {
+                    const chartContainer = document.getElementById('tradeChart');
+                    if (chartContainer && chartContainer.style.display !== 'none' && chartContainer.style.opacity !== '0') {
+                        console.log('Periodic chart refresh');
+                        plotTradeChart();
+                    }
+                } catch (error) {
+                    console.error('Error in periodic chart refresh:', error);
+                }
+            }, 30000); // Refresh every 30 seconds
 
             // Remove any existing event listeners
             const form = document.getElementById('tradeForm');
