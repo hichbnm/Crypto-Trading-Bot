@@ -12,12 +12,13 @@ BINANCE_API_SECRET = os.getenv('BINANCE_API_SECRET', '')
 TRADING_FEE = 0.001  # 0.1% trading fee
 TAKE_PROFIT_PERCENTAGE = 4  # 4% take profit (match backtest.py)
 STOP_LOSS_PERCENTAGE = 10  # 10% stop loss (match backtest.py)
+DEFAULT_MARGIN = 0.25  # Default margin in USDT for trades
 RSI_PERIOD = 16  # RSI lookback period (match backtest.py)
 RSI_OVERSOLD = 25  # RSI buy threshold (match backtest.py)
 RSI_OVERBOUGHT = 70  # RSI sell threshold (match backtest.py)
 
 # Price Fetching Configuration
-PRICE_FETCH_DELAY = 0.2  # Delay between price fetches in seconds 
+PRICE_FETCH_DELAY = 30  # Delay between price fetches in seconds 
 
 # Indicator Periods and Thresholds
 SMA_PERIOD = 20
@@ -35,3 +36,7 @@ VOLUME_CONFIRMATION_MULTIPLIER = 1.5
 TURN_POINT_WINDOW = 7
 RSI_CONFIRMATION_LEVEL = 35  # For buy confirmation after oversold
 RSI_OVERBOUGHT_CONFIRMATION = 65  # For sell confirmation after overbought 
+
+# Turning Point Strategy Configuration
+TURNING_POINT_MARGIN = 0.15  # Margin in USDT for turn-point based sell/buy 
+

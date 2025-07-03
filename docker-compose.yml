@@ -1,9 +1,9 @@
 services:
   app:
     build: .
-    container_name: trading-bot
+    container_name: trading-bot-version-2
     ports:
-      - "6000:8000"
+      - "9000:9000"
     env_file:
       - .env
     volumes:

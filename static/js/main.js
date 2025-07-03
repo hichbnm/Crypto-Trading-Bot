@@ -888,7 +888,7 @@ async function placeAutoBuyOrder() {
     
     // Show loading state
     submitButton.disabled = true;
-    submitButton.textContent = 'Checking RSI...';
+    submitButton.textContent = 'Checking Low Turn Point...';
     
     try {
         // Get form data
@@ -952,7 +952,7 @@ async function placeAutoBuyOrder() {
     } finally {
         // Reset button state
         submitButton.disabled = false;
-        submitButton.textContent = 'Auto Buy (RSI)';
+        submitButton.textContent = 'Auto Buy';
     }
 }
 
@@ -1074,7 +1074,7 @@ async function plotTradeChart() {
             mode: 'lines',
             line: { color: color, width: 2 },
             name: 'Bitcoin (BTC)',
-            hovertemplate: '<b>Bitcoin (BTC)</b><br>Time: %{x}<br>Price: <b>$%{y:,.2f}</b><extra></extra>',
+            hovertemplate: 'Price: $%{y:.2f}<br>Time: %{x}<extra></extra>',
             connectgaps: true
         };
 
@@ -1087,7 +1087,7 @@ async function plotTradeChart() {
             marker: { color: 'rgba(38, 166, 154, 0.3)', opacity: 0.2 },
             name: 'BTC Volume',
             opacity: 0.2,
-            hovertemplate: 'BTC Volume: <b>%{y:,.0f}</b><br>Time: %{x}<extra></extra>',
+            hovertemplate: 'Vol: %{y:.0f}<br>Time: %{x}<extra></extra>',
             showlegend: false
         };
 
@@ -1104,6 +1104,10 @@ async function plotTradeChart() {
                     minDiff = diff;
                     closest = t;
                 }
+            }
+            // Debug: warn if the closest time is more than 10 minutes away
+            if (minDiff > 10 * 60 * 1000) {
+                console.warn('Trade time is far from any candle:', targetTime, 'Closest:', closest, 'Diff (min):', minDiff / 60000);
             }
             return closest;
         }
@@ -1261,9 +1265,7 @@ async function plotTradeChart() {
             },
             hovermode: 'x unified',
             hoverlabel: {
-                bgcolor: '#fff',
-                bordercolor: '#26a69a',
-                font: { color: '#222', size: 14, family: 'Segoe UI, sans-serif' }
+                font: { size: 11 }
             },
             margin: { t: 40, b: 40, l: 60, r: 60 },
             responsive: true,

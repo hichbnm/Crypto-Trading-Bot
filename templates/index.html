@@ -186,6 +186,45 @@
             transform: none;
         }
 
+        /* Custom fast tooltip styles */
+        button[data-tooltip] {
+            position: relative;
+        }
+
+        button[data-tooltip]:hover::after {
+            content: attr(data-tooltip);
+            position: absolute;
+            bottom: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: rgba(0, 0, 0, 0.9);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            white-space: nowrap;
+            z-index: 1000;
+            margin-bottom: 8px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+            animation: fadeIn 0.1s ease-in;
+            pointer-events: none;
+        }
+
+        button[data-tooltip]:hover::before {
+            content: '';
+            position: absolute;
+            bottom: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            border: 5px solid transparent;
+            border-top-color: rgba(0, 0, 0, 0.9);
+            margin-bottom: 3px;
+            z-index: 1000;
+            pointer-events: none;
+        }
+
+
+
         .close-btn {
             background-color: var(--danger-color);
             padding: 0.5rem 1rem;
@@ -508,13 +547,13 @@
             line-height: 1.5;
         }
 
-        .take-profit-container {
+        .margin-container {
             display: flex;
             align-items: center;
             gap: 10px;
         }
 
-        .take-profit-container select {
+        .margin-container select {
             width: 60px;
             padding: 8px;
             border: 1px solid #ddd;
@@ -522,7 +561,7 @@
             background-color: white;
         }
 
-        .take-profit-container input {
+        .margin-container input {
             flex: 1;
         }
 
@@ -580,7 +619,7 @@
     <main>
         <div class="container">
             <div class="trading-form">
-                <h2>Version 1 - RSI, Supply & Demand strategy</h2>
+                <h2>Version 2 – Armen’s high/low curves strategy.</h2>
                 <div id="error-container"></div>
                 <form id="tradeForm" onsubmit="return false">
                     <div class="form-group">
@@ -602,15 +641,12 @@
                         <input type="number" id="amount" name="amount" step="0.01" required>
                     </div>
                     <div class="form-group">
-                        <label for="take_profit">Take Profit</label>
-                        <div class="take-profit-container">
-                            <input type="number" id="take_profit" name="take_profit" step="0.001" min="0.001" value="10">
-                            <select id="take_profit_type" name="take_profit_type">
-                                <option value="percentage">%</option>
-                                <option value="dollar">$</option>
-                            </select>
+                        <label for="take_profit">Margin (USDT)</label>
+                        <div class="margin-container">
+                            <input type="number" id="take_profit" name="take_profit" step="0.01" min="0.01" value="{{ config.DEFAULT_MARGIN if config else 0.25 }}">
+                            <span style="color: #666; font-weight: 500;">USDT</span>
                         </div>
-                        <div class="hint">Default: 10%</div>
+                        <div class="hint">Used for turning point detection only. Default: ${{ config.DEFAULT_MARGIN if config else 0.25 }} USDT</div>
                     </div>
                     <div class="form-group">
                         <label for="stop_loss">Stop Loss (%)</label>
@@ -636,8 +672,8 @@
                                placeholder="Enter limit price">
                     </div>
 
-                    <button type="submit">Place Order</button>
-                    <button type="button" id="autoBuyBtn" onclick="placeAutoBuyOrder()">Auto Buy (RSI)</button>
+                    <button type="submit" data-tooltip="Directly entering the market without searching for low curve">Place Order</button>
+                    <button type="button" id="autoBuyBtn" onclick="placeAutoBuyOrder()" data-tooltip="Waiting for low curve detection before entering the market">Auto Buy</button>
                 </form>
             </div>
 
@@ -656,7 +692,7 @@
                             <th>Current Price</th>
                             <th>Profit/Loss</th>
                             <th>Fees</th>
-                            <th>Take Profit</th>
+                            <th>Margin (TP)</th>
                             <th>Stop Loss</th>
                             <th>ROI</th>
                             <th>Status</th>
@@ -741,7 +777,7 @@
                         ${parseFloat(trade.profit_loss).toFixed(2)}
                     </td>
                     <td>${parseFloat(trade.fees).toFixed(2)}</td>
-                    <td>${parseFloat(trade.take_profit).toFixed(1)}%</td>
+                    <td>$${parseFloat(trade.take_profit).toFixed(2)}</td>
                     <td>${parseFloat(trade.stop_loss).toFixed(1)}%</td>
                     <td class="${trade.roi > 0 ? 'profit' : 'loss'}">
                         ${parseFloat(trade.roi).toFixed(2)}%

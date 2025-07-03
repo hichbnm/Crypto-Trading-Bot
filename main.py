@@ -24,7 +24,8 @@ from binance.exceptions import BinanceAPIException
 from config import (
     BINANCE_API_KEY, BINANCE_API_SECRET, TRADING_FEE, 
     TAKE_PROFIT_PERCENTAGE, STOP_LOSS_PERCENTAGE, PRICE_FETCH_DELAY,
-    RSI_PERIOD, RSI_OVERSOLD, RSI_OVERBOUGHT
+    RSI_PERIOD, RSI_OVERSOLD, RSI_OVERBOUGHT, TURNING_POINT_MARGIN, TURN_POINT_WINDOW,
+    DEFAULT_MARGIN
 )
 import math
 import secrets
@@ -231,7 +232,7 @@ def format_datetime(iso_timestamp: str) -> str:
 
 # Price cache with timestamp
 price_cache = {}
-CACHE_DURATION = 1  # Cache duration in seconds
+CACHE_DURATION = 60  # Cache duration in seconds
 RATE_LIMIT_DELAY = PRICE_FETCH_DELAY  # Use the configured delay
 last_request_time = 0
 
@@ -617,7 +618,7 @@ async def broadcast_trade_update(trade=None):
                 "fees": active_trade.get("fees", 0.0),
                 "roi": active_trade.get("roi", 0.0),
                 "take_profit": active_trade.get("take_profit", TAKE_PROFIT_PERCENTAGE),
-                "take_profit_type": active_trade.get("take_profit_type", "percentage"),
+                "take_profit_type": "dollar",
                 "stop_loss": active_trade.get("stop_loss"),  # Just pass the value as is
                 "entry_time": format_datetime(active_trade.get("entry_time")) if active_trade.get("entry_time") else "N/A"
             }
@@ -650,195 +651,151 @@ async def lifespan(app: FastAPI):
         raise ValueError(f"Error verifying Binance API connection: {str(e)}")
 
     async def monitor_trades():
-        """Monitor active trades and update their status."""
         while True:
             try:
-                for trade in active_trades[:]:  # Create a copy to avoid modification during iteration
+                for trade in active_trades[:]:
                     try:
                         # Get current price
                         current_price = await fetch_price(trade["coin"])
                         if current_price is None:
                             continue
                         if "price_history" not in trade:
-                            trade["price_history"] = [] 
-                        # Initialize price history if not exists
-                        last_price = trade["price_history"][-1] if "price_history" in trade and trade["price_history"] else None
+                            trade["price_history"] = []
+                        last_price = trade["price_history"][-1] if trade["price_history"] else None
                         if last_price is not None and current_price == last_price:
                             continue
-                        
-                        # Add current price to history (keep last 20 prices for better pattern recognition)
                         trade["price_history"].append(current_price)
                         if len(trade["price_history"]) > 20:
                             trade["price_history"] = trade["price_history"][-20:]
-                        
-                        # Update trade data
                         trade["current_price"] = current_price
-                        
-                        # Handle limit orders
                         if trade["status"] == "Pending" and trade["order_type"] == "limit":
-                            # Check if limit price is reached
                             if current_price <= trade["limit_price"]:
                                 trade["status"] = "Open"
                                 trade["entry_price"] = current_price
                                 logger.info(f"Limit order executed for trade {trade['id']} at price {current_price}")
-                        
-                        # Only calculate metrics for open trades
                         if trade["status"] == "Open":
-                            # Calculate metrics
                             metrics = calculate_trade_metrics(trade, current_price)
                             trade.update(metrics)
-                            
-                            # Calculate indicators
                             symbol = SYMBOL_MAPPING.get(trade["coin"].lower())
                             if symbol:
                                 klines = binance_client.get_klines(
                                     symbol=symbol,
-                                    interval=Client.KLINE_INTERVAL_1HOUR,
+                                    interval=Client.KLINE_INTERVAL_5MINUTE,
                                     limit=100
                                 )
                                 closes = [float(k[4]) for k in klines]
-                                highs = [float(k[2]) for k in klines]
-                                lows = [float(k[3]) for k in klines]
-                                volumes = [float(k[5]) for k in klines]
-                                
-                                # RSI
-                                current_rsi = calculate_rsi(closes)
-                                trade["current_rsi"] = current_rsi
-                                
-                                # SMA/EMA
-                                from config import SMA_PERIOD, EMA_SHORT_PERIOD, EMA_LONG_PERIOD, MACD_FAST_PERIOD, MACD_SLOW_PERIOD, MACD_SIGNAL_PERIOD, STOCH_K_PERIOD, STOCH_D_PERIOD, BOLLINGER_PERIOD, BOLLINGER_NUM_STD, VOLUME_AVG_PERIOD, VOLUME_CONFIRMATION_MULTIPLIER, TURN_POINT_WINDOW, RSI_CONFIRMATION_LEVEL, RSI_OVERBOUGHT_CONFIRMATION
-                                sma = calculate_sma(closes, SMA_PERIOD)
-                                ema_short = calculate_ema(closes, EMA_SHORT_PERIOD)
-                                ema_long = calculate_ema(closes, EMA_LONG_PERIOD)
-                                
-                                # MACD
-                                macd_line, macd_signal = calculate_macd(closes, MACD_FAST_PERIOD, MACD_SLOW_PERIOD, MACD_SIGNAL_PERIOD)
-                                
-                                # Stochastic Oscillator
-                                stoch_k, stoch_d = calculate_stochastic(highs, lows, closes, STOCH_K_PERIOD, STOCH_D_PERIOD)
-                                
-                                # Bollinger Bands
-                                bb_upper, bb_mid, bb_lower = calculate_bollinger_bands(closes, BOLLINGER_PERIOD, BOLLINGER_NUM_STD)
-                                
-                                # Volume confirmation
-                                avg_vol = calculate_average_volume(volumes, VOLUME_AVG_PERIOD)
-                                vol_confirm = volumes[-1] > VOLUME_CONFIRMATION_MULTIPLIER * avg_vol if avg_vol > 0 else False
-                                
-                                # Turn points
-                                is_high_turn = is_high_turn_point(closes, TURN_POINT_WINDOW)
-                                is_low_turn = is_low_turn_point(closes, TURN_POINT_WINDOW)
-                                
-                                # Save indicators for logging/visualization
-                                trade["sma"] = sma
-                                trade["ema_short"] = ema_short
-                                trade["ema_long"] = ema_long
-                                trade["macd_line"] = macd_line
-                                trade["macd_signal"] = macd_signal
-                                trade["stoch_k"] = stoch_k
-                                trade["stoch_d"] = stoch_d
-                                trade["bb_upper"] = bb_upper
-                                trade["bb_mid"] = bb_mid
-                                trade["bb_lower"] = bb_lower
-                                trade["avg_vol"] = avg_vol
-                                trade["vol_confirm"] = vol_confirm
-                                trade["is_high_turn"] = is_high_turn
-                                trade["is_low_turn"] = is_low_turn
-                                
-                                # --- Enhanced Sell Logic: Match backtest.py ---
+                                logger.info(f"[SELL LOGIC] Last {TURN_POINT_WINDOW} closes: {closes[-TURN_POINT_WINDOW:]}")
                                 should_sell = False
                                 sell_reason = ""
-                                signal_strength = 0
                                 profit_percentage = trade["roi"]
                                 stop_loss_hit = trade.get("stop_loss") is not None and profit_percentage <= -trade["stop_loss"]
-                                if stop_loss_hit:
+                                is_high_turn = is_high_turn_point(closes, TURN_POINT_WINDOW)
+                                logger.info(f"[SELL LOGIC] Checking for high turn point: is_high_turn={is_high_turn}")
+                                if is_high_turn and len(closes) >= TURN_POINT_WINDOW and closes[-1] < closes[-2] and closes[-2] < closes[-3]:
+                                    peak_price = closes[- (TURN_POINT_WINDOW // 2) - 1]
+                                    price_drop_from_peak = peak_price - closes[-1]
+                                    # Calculate required price drop based on margin (always in USDT)
+                                    margin_value = trade.get("take_profit", TURNING_POINT_MARGIN)
+                                    required_price_drop = margin_value / trade['quantity']
+                                    logger.info(f"[SELL LOGIC] peak_price={peak_price}, current_price={closes[-1]}, price_drop_from_peak={price_drop_from_peak}, required_price_drop={required_price_drop}, margin_value={margin_value}")
+                                    # Check if current profit exceeds the margin threshold
+                                    if trade['profit_loss'] > margin_value:
+                                        should_sell = True
+                                        sell_reason = f"Turning Point Sell (Profit: ${trade['profit_loss']:.2f} > Margin: ${margin_value:.2f})"
+                                elif stop_loss_hit:
                                     should_sell = True
                                     sell_reason = "Stop Loss"
-                                elif profit_percentage > 0:
-                                    if profit_percentage >= TAKE_PROFIT_PERCENTAGE:
-                                        should_sell = True
-                                        sell_reason = "Take Profit"
-                                    elif is_high_turn and current_rsi > 70 and vol_confirm and ema_short < ema_long:
-                                        should_sell = True
-                                        sell_reason = "Perfect Exit (5/5): High turn, RSI>70, High Vol, Downtrend"
-                                        signal_strength = 5
-                                    elif is_high_turn and current_rsi > 60 and vol_confirm:
-                                        should_sell = True
-                                        sell_reason = "Strong Exit (4/5): High turn, RSI>60, High Vol"
-                                        signal_strength = 4
-                                    elif current_rsi > 70 and vol_confirm:
-                                        should_sell = True
-                                        sell_reason = "Good Exit (3/5): RSI>70, High Vol"
-                                        signal_strength = 3
-                                    elif is_high_turn and current_rsi > 60:
-                                        should_sell = True
-                                        sell_reason = "Basic Exit (2/5): High turn, RSI>60"
-                                        signal_strength = 2
-                                    elif current_rsi > 70:
-                                        should_sell = True
-                                        sell_reason = "Simple Exit (1/5): RSI>70"
-                                        signal_strength = 1
-                                    elif macd_line < macd_signal:
-                                        should_sell = True
-                                        sell_reason = "MACD Bearish Cross"
-                                    elif stoch_k < stoch_d and stoch_k > 80 and stoch_d > 80:
-                                        should_sell = True
-                                        sell_reason = "Stochastic Bearish Cross (Overbought)"
-                                    elif closes[-1] >= bb_upper:
-                                        should_sell = True
-                                        sell_reason = "Price above upper Bollinger Band"
-                                
-                                # Log all indicator values and signal strength
-                                logger.info(f"[SELL CHECK] {symbol} | Price: {closes[-1]:.2f} | RSI: {current_rsi:.2f} | SMA: {sma:.2f} | EMA_S: {ema_short:.2f} | EMA_L: {ema_long:.2f} | MACD: {macd_line:.2f}/{macd_signal:.2f} | STOCH: {stoch_k:.2f}/{stoch_d:.2f} | BB: {bb_lower:.2f}/{bb_mid:.2f}/{bb_upper:.2f} | Vol: {volumes[-1]:.2f}/{avg_vol:.2f} | HighTurn: {is_high_turn} | Signal: {signal_strength} | Reason: {sell_reason}")
-                                
                                 if should_sell:
-                                    logger.info(f"Selling {symbol} due to {sell_reason} (RSI: {current_rsi:.2f}, ROI: {trade['roi']:.2f}%)")
-                                    # Save parameters before closing
-                                    auto_buy_params = None
-                                    if trade.get('auto_buy_loop'):
-                                        auto_buy_params = {
-                                            'coin': trade['coin'],
-                                            'amount': trade['amount_usdt'],
-                                            'order_type': trade['order_type'],
-                                            'take_profit': trade.get('take_profit'),
-                                            'take_profit_type': trade.get('take_profit_type', 'percentage'),
-                                            'stop_loss': trade.get('stop_loss'),
-                                            # Only for auto-buy loop
-                                            'auto_buy_loop': True
-                                        }
+                                    logger.info(f"Selling {symbol} due to {sell_reason} (ROI: {trade['roi']:.2f}%)")
                                     await close_trade(trade["id"])
-                                    # If auto_buy_loop, create a new auto-buy trade
-                                    if auto_buy_params:
-                                        coin_lower = auto_buy_params['coin'].lower()
-                                        if coin_lower in canceled_auto_buy_coins:
-                                            logger.info(f"Auto-buy loop for {coin_lower} is canceled by user. No rebuy.")
-                                            continue
-                                        from fastapi import Request
-                                        class DummyRequest:
-                                            cookies = {}
-                                        dummy_request = DummyRequest()
-                                        from fastapi import Depends
-                                        try:
-                                            trade_request = TradeRequest(**auto_buy_params)
-                                            await auto_buy(trade_request, user='auto')
-                                        except Exception as e:
-                                            logger.error(f"Error auto-rebuying after take profit: {str(e)}")
                                     continue
-                            # Broadcast update whenever price changes
-                        await broadcast_trade_update(trade)
-                                
+                        # Broadcast update whenever price changes
+                        try:
+                            await broadcast_trade_update(trade)
+                        except Exception as e:
+                            logger.error(f"Error broadcasting trade update: {str(e)}")
                     except Exception as e:
                         logger.error(f"Error monitoring trade {trade.get('id', 'unknown')}: {str(e)}")
                         continue
-                
-                await asyncio.sleep(1) # Check every second
-                
+                await asyncio.sleep(60)
             except Exception as e:
                 logger.error(f"Error in monitor_trades: {str(e)}")
-                await asyncio.sleep(1)  # Wait longer on error
+                await asyncio.sleep(60)
 
     # Start monitoring task
     asyncio.create_task(monitor_trades())
+
+    # Add this function to monitor and execute pending orders based on low turn point logic
+    async def monitor_pending_orders():
+        while True:
+            try:
+                for trade in active_trades:
+                    if trade["status"] == "Pending" and trade.get("auto_buy_loop"):
+                        symbol = SYMBOL_MAPPING.get(trade["coin"].lower())
+                        if not symbol:
+                            continue
+                        klines = binance_client.get_klines(
+                            symbol=symbol,
+                            interval=Client.KLINE_INTERVAL_5MINUTE,
+                            limit=100
+                        )
+                        closes = [float(k[4]) for k in klines]
+                        logger.info(f"[BUY LOGIC] Last {TURN_POINT_WINDOW} closes: {closes[-TURN_POINT_WINDOW:]}")
+                        is_low_turn = is_low_turn_point(closes, TURN_POINT_WINDOW)
+                        logger.info(f"[BUY LOGIC] Checking for low turn point: is_low_turn={is_low_turn}")
+                        should_buy = False  # Initialize here to avoid unbound variable error
+                        # Check if this is the initial buy (auto_buy_iteration == 1) or a subsequent auto-buy
+                        is_initial_buy = trade.get("auto_buy_iteration", 1) == 1
+                        
+                        # Different logic for initial vs subsequent auto-buy
+                        if is_initial_buy:
+                            # Initial buy: only low turn point logic (no price rise threshold)
+                            if is_low_turn and len(closes) >= TURN_POINT_WINDOW and closes[-1] > closes[-2] and closes[-2] > closes[-3]:
+                                logger.info(f"[BUY LOGIC] Initial buy: Low turn point detected - executing buy order immediately")
+                                should_buy = True
+                        else:
+                            # Subsequent auto-buy: low turn point + price rise threshold
+                            if is_low_turn and len(closes) >= TURN_POINT_WINDOW and closes[-1] > closes[-2] and closes[-2] > closes[-3]:
+                                trough_price = closes[- (TURN_POINT_WINDOW // 2) - 1]
+                                price_rise_from_trough = closes[-1] - trough_price
+                                # Calculate required price increase based on margin (always in USDT)
+                                margin_value = trade.get("take_profit", TURNING_POINT_MARGIN)
+                                required_price_increase = margin_value / trade['quantity']
+                                logger.info(f"[BUY LOGIC] Subsequent buy: trough_price={trough_price}, current_price={closes[-1]}, price_rise_from_trough={price_rise_from_trough}, required_price_increase={required_price_increase}, margin_value={margin_value}")
+                                
+                                if price_rise_from_trough > required_price_increase:
+                                    should_buy = True
+                                    logger.info(f"[BUY LOGIC] Subsequent buy: Low turn point detected with sufficient price rise - executing buy order")
+                                else:
+                                    logger.info(f"[BUY LOGIC] Subsequent buy: Low turn point detected but price rise insufficient ({price_rise_from_trough:.2f} < {required_price_increase:.2f})")
+                            
+                        if should_buy:
+                                try:
+                                    order = await execute_binance_order(
+                                        symbol=symbol,
+                                        side='BUY',
+                                        order_type='MARKET',
+                                        quantity=trade["quantity"]
+                                    )
+                                    trade["status"] = "Open"
+                                    trade["binance_order_id"] = order['orderId']
+                                    trade["entry_price"] = float(order['fills'][0]['price'])
+                                    trade["current_price"] = float(order['fills'][0]['price'])
+                                    trade["fees"] = sum(float(fill['commission']) for fill in order['fills'])
+                                    trade["entry_time"] = format_datetime(datetime.now().isoformat())
+                                    trade["auto_buy_iteration"] = trade["auto_buy_iteration"] + 1
+                                    save_trades()
+                                    await broadcast_trade_update(trade)
+                                    logger.info(f"Executed pending order for {symbol} at low turn point.")
+                                except Exception as e:
+                                    logger.error(f"Error executing pending order: {str(e)}")
+            except Exception as e:
+                logger.error(f"Error in monitor_pending_orders: {str(e)}")
+            await asyncio.sleep(60)  # Check every 30 seconds
+
+    # Start monitoring task
     asyncio.create_task(monitor_pending_orders())
+
     yield
 
 # Initialize FastAPI app with lifespan
@@ -962,7 +919,8 @@ async def home(request: Request, user: str = Depends(require_auth)):
     return templates.TemplateResponse("index.html", {
         "request": request,
         "active_trades": processed_trades,
-        "trade_history": processed_history
+        "trade_history": processed_history,
+        "config": {"DEFAULT_MARGIN": DEFAULT_MARGIN}
     })
 
 class TradeRequest(BaseModel):
@@ -1141,16 +1099,8 @@ async def _create_trade_logic(trade_request: TradeRequest):
         # Calculate initial fees (only for market orders)
         entry_fee = round(amount_usdt * TRADING_FEE, 2) if status == "Open" else 0.0
 
-        # Calculate take profit price based on type
-        if trade_request.take_profit is not None:
-            if trade_request.take_profit_type == "percentage":
-                take_profit_price = entry_price * (1 + trade_request.take_profit / 100)
-            else:  # dollar amount
-                # Sell when position value reaches amount_usdt + take_profit
-                # sell_price = (amount_usdt + take_profit) / quantity
-                take_profit_price = (amount_usdt + trade_request.take_profit) / float(formatted_quantity)
-        else:
-            take_profit_price = entry_price * (1 + TAKE_PROFIT_PERCENTAGE / 100)
+        # Take profit logic disabled - no take profit price calculation
+        take_profit_price = None
         
         # Create trade data
         trade = {
@@ -1168,11 +1118,11 @@ async def _create_trade_logic(trade_request: TradeRequest):
             "fees": entry_fee,
             "roi": 0.0,
             "binance_order_id": order['orderId'],  # Store Binance order ID
-            "take_profit": trade_request.take_profit if trade_request.take_profit is not None else TAKE_PROFIT_PERCENTAGE,
-            "take_profit_type": trade_request.take_profit_type if hasattr(trade_request, 'take_profit_type') else 'percentage',
-            "take_profit_price": take_profit_price,
+            "take_profit": trade_request.take_profit if trade_request.take_profit is not None else DEFAULT_MARGIN,
+            "take_profit_type": "dollar",
             "stop_loss": trade_request.stop_loss,
-            "auto_buy_loop": True  # Mark this trade for auto-rebuy
+            "auto_buy_loop": True,  # Mark this trade for auto-rebuy
+            "auto_buy_iteration": 2 if trade_request.order_type == "market" else 1  # For market: next buy is subsequent, for limit: next buy is initial
         }
         
         # Add to active trades
@@ -1213,19 +1163,31 @@ async def create_trade(trade_request: TradeRequest, user: str = Depends(require_
 def calculate_trade_metrics(trade, current_price):
     """Calculate trade metrics including profit/loss and fees."""
     try:
+        # Ensure current_price is a float, default to 0 if None
+        safe_current_price = float(current_price) if current_price is not None else 0.0
+
+        # For pending trades or trades without a valid entry price, we can't calculate metrics.
+        entry_price_val = trade.get("entry_price")
+        if entry_price_val is None or float(entry_price_val) <= 0:
+            return {
+                "current_price": safe_current_price,
+                "profit_loss": 0.0,
+                "fees": 0.0,
+                "roi": 0.0
+            }
+
         # Convert all values to float and ensure they are positive
         amount_usdt = abs(float(trade.get("amount_usdt", 0.0)))
-        entry_price = abs(float(trade.get("entry_price", 0.0)))
-        current_price = abs(float(current_price))
+        entry_price = abs(float(entry_price_val))
 
         # Calculate quantity if not present
         if "quantity" not in trade:
-            trade["quantity"] = amount_usdt / entry_price if entry_price > 0 else 0.0
-        quantity = abs(float(trade["quantity"]))
+            trade["quantity"] = amount_usdt / entry_price
+        quantity = abs(float(trade.get("quantity", 0.0)))
 
         # Calculate values
         entry_value = quantity * entry_price
-        current_value = quantity * current_price
+        current_value = quantity * safe_current_price
 
         # Calculate gross profit/loss
         gross_profit_loss = current_value - entry_value
@@ -1242,16 +1204,18 @@ def calculate_trade_metrics(trade, current_price):
         roi = (net_profit_loss / entry_value) * 100 if entry_value > 0 else 0
 
         return {
-            "current_price": current_price,
+            "current_price": safe_current_price,
             "profit_loss": round(net_profit_loss, 2),
             "fees": round(total_fees, 2),
             "roi": round(roi, 2)
         }
 
-    except Exception as e:
-        logger.error(f"Error calculating trade metrics: {str(e)}")
+    except (ValueError, TypeError) as e:
+        logger.error(f"Error calculating trade metrics for trade {trade.get('id')}: {str(e)}")
+        # Fallback for any other conversion errors
+        safe_current_price = float(current_price) if current_price is not None else 0.0
         return {
-            "current_price": current_price,
+            "current_price": safe_current_price,
             "profit_loss": 0.0,
             "fees": 0.0,
             "roi": 0.0
@@ -1349,7 +1313,34 @@ async def close_trade(trade_id: str, user: str = Depends(require_auth)):
             
             # Remove from active trades
             active_trades.remove(trade)
-            
+
+            # --- AUTO-BUY LOOP: Create new pending trade if enabled ---
+            if trade.get('auto_buy_loop', False):
+                new_trade = {
+                    "id": str(uuid.uuid4()),
+                    "coin": trade["coin"],
+                    "amount_usdt": trade["amount_usdt"],
+                    "quantity": trade["amount_usdt"] / exit_price,
+                    "order_type": trade["order_type"],
+                    "entry_price": None,
+                    "current_price": exit_price,
+                    "status": "Pending",
+                    "limit_price": None,
+                    "entry_time": format_datetime(datetime.now().isoformat()),
+                    "profit_loss": 0.0,
+                    "fees": 0.0,
+                    "roi": 0.0,
+                    "binance_order_id": None,
+                    "take_profit": trade.get("take_profit"),
+                    "take_profit_type": trade.get("take_profit_type", "dollar"),
+                    "stop_loss": trade.get("stop_loss"),
+                    "auto_buy_loop": True,
+                    "auto_buy_iteration": 1
+                }
+                active_trades.append(new_trade)
+                save_trades()
+                await broadcast_trade_update(new_trade)
+
             # Save trades to file
             save_trades()
             
@@ -1600,229 +1591,11 @@ def print_rsi_status(symbol: str, rsi: float, is_oversold: bool = False):
         print("Status: Waiting for oversold condition")
     print("="*50 + "\n")
 
-@app.post("/auto-buy")
-async def auto_buy(trade_request: TradeRequest, user: str = Depends(require_auth)):
-    """Create a trade based on RSI indicator."""
-    try:
-        # Get price history for RSI calculation
-        symbol = SYMBOL_MAPPING.get(trade_request.coin.lower())
-        if not symbol:
-            raise HTTPException(status_code=400, detail=f"Unsupported coin: {trade_request.coin}")
-            
-        logger.info(f"Starting auto-buy process for {symbol}")
-        
-        # Check USDT balance first
-        try:
-            usdt_balance = await get_binance_balance('USDT')
-            logger.info(f"Current USDT balance: {usdt_balance}")
-            
-            if usdt_balance < float(trade_request.amount):
-                raise HTTPException(
-                    status_code=400, 
-                    detail=f"Insufficient USDT balance. Required: {float(trade_request.amount):.2f} USDT, Available: {usdt_balance:.2f} USDT"
-                )
-        except Exception as e:
-            logger.error(f"Error checking USDT balance: {str(e)}")
-            raise HTTPException(status_code=400, detail=f"An issue occurred while verifying your USDT balance. Please try again.")
-            
-        # Get klines (candlestick data) from Binance
-        try:
-            klines = binance_client.get_klines(
-                symbol=symbol,
-                interval=Client.KLINE_INTERVAL_1HOUR,
-                limit=100  # Get last 100 candles for better RSI calculation
-            )
-            logger.info(f"Monitor: Successfully retrieved {len(klines)} klines for {symbol}. First 5 klines: {klines[:5]}")
-        except Exception as e:
-            logger.error(f"Error getting klines for {symbol}: {str(e)}")
-            raise HTTPException(status_code=500, detail=f"Error getting price history: {str(e)}")
-        
-        # Extract closing prices
-        try:
-            prices = [float(k[4]) for k in klines]  # Index 4 is the closing price
-            logger.info(f"Monitor: Extracted {len(prices)} closing prices for {symbol}. First 5 prices: {prices[:5]}")
-        except Exception as e:
-            logger.error(f"Error extracting closing prices: {str(e)}")
-            raise HTTPException(status_code=500, detail=f"Error processing price data: {str(e)}")
-        
-        # Calculate RSI
-        try:
-            rsi = calculate_rsi(prices)
-            logger.info(f"Monitor: Calculated RSI for {symbol}: {rsi:.2f}")
-        except Exception as e:
-            logger.error(f"Error calculating RSI: {str(e)}")
-            raise HTTPException(status_code=500, detail=f"Error calculating RSI: {str(e)}")
-        
-        # Get current price
-        try:
-            ticker = binance_client.get_symbol_ticker(symbol=symbol)
-            current_price = float(ticker['price'])
-            logger.info(f"Current price for {symbol}: {current_price}")
-        except Exception as e:
-            logger.error(f"Error getting current price: {str(e)}")
-            raise HTTPException(status_code=500, detail=f"Error getting current price: {str(e)}")
-        
-        # Calculate quantity based on USDT amount
-        quantity = float(trade_request.amount) / current_price
-        
-        # Get symbol precision and format quantity
-        try:
-            exchange_info = binance_client.get_exchange_info()
-            symbol_info = next((s for s in exchange_info['symbols'] if s['symbol'] == symbol), None)
-            if not symbol_info:
-                raise HTTPException(status_code=400, detail=f"Could not get exchange info for {symbol}")
-            
-            # Get LOT_SIZE filter
-            lot_size_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'LOT_SIZE'), None)
-            if not lot_size_filter:
-                raise HTTPException(status_code=400, detail=f"Could not get LOT_SIZE filter for {symbol}")
-            
-            step_size = float(lot_size_filter['stepSize'])
-            min_qty = float(lot_size_filter['minQty'])
-            precision = len(str(step_size).rstrip('0').split('.')[-1])
-            
-            # Round up to the nearest valid step size
-            quantity = math.ceil(quantity / step_size) * step_size
-            formatted_quantity = format(quantity, f'.{precision}f')
-            
-            # Validate minimum quantity
-            if float(formatted_quantity) < min_qty:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Calculated quantity {formatted_quantity} is below minimum {min_qty} for {symbol}"
-                )
-                
-            # Calculate actual amount that will be used
-            actual_amount = float(formatted_quantity) * current_price
-            if actual_amount > usdt_balance:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Adjusted amount {actual_amount:.2f} USDT exceeds available balance {usdt_balance:.2f} USDT"
-                )
-                
-        except Exception as e:
-            logger.error(f"Error formatting quantity: {str(e)}")
-            raise HTTPException(status_code=400, detail=f"Error formatting quantity: {str(e)}")
-        
-        # Create trade data without executing any orders
-        trade = {
-            "id": str(uuid.uuid4()),
-            "coin": trade_request.coin,
-            "amount_usdt": float(trade_request.amount),
-            "quantity": float(formatted_quantity),
-            "order_type": trade_request.order_type,
-            "entry_price": None,
-            "current_price": current_price,
-            "status": "Pending",
-            "limit_price": None,  # No limit price needed
-            "entry_time": format_datetime(datetime.now().isoformat()),
-            "profit_loss": 0.0,
-            "fees": 0.0,
-            "roi": 0.0,
-            "binance_order_id": None,  # Will be set when order is executed
-            "take_profit": trade_request.take_profit if trade_request.take_profit is not None else TAKE_PROFIT_PERCENTAGE,
-            "take_profit_type": trade_request.take_profit_type if hasattr(trade_request, 'take_profit_type') else 'percentage',
-            "stop_loss": trade_request.stop_loss,
-            "rsi_trigger": RSI_OVERSOLD,
-            "current_rsi": rsi,
-            "auto_buy_loop": True  # Mark this trade for auto-rebuy
-        }
-        
-        # Add to active trades
-        active_trades.append(trade)
-        
-        # Save trades to file
-        save_trades()
-        
-        # Broadcast trade update
-        await broadcast_trade_update(trade)
-        
-        return {
-            "status": "success",
-            "message": f"Pending order created. Will execute when RSI < 30 (Current RSI: {rsi:.2f})",
-            "trade": trade
-        }
-            
-    except HTTPException as e:
-        # Re-raise HTTP exceptions as they already have proper status codes
-        raise e
-    except Exception as e:
-        logger.error(f"Unexpected error in auto-buy: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
-
-# Add this function to monitor and execute pending orders
-async def monitor_pending_orders():
-    """Monitor pending orders and execute them when enhanced buy conditions are met."""
-    from config import SMA_PERIOD, EMA_SHORT_PERIOD, EMA_LONG_PERIOD, MACD_FAST_PERIOD, MACD_SLOW_PERIOD, MACD_SIGNAL_PERIOD, STOCH_K_PERIOD, STOCH_D_PERIOD, BOLLINGER_PERIOD, BOLLINGER_NUM_STD, VOLUME_AVG_PERIOD, VOLUME_CONFIRMATION_MULTIPLIER, TURN_POINT_WINDOW, RSI_CONFIRMATION_LEVEL, RSI_OVERBOUGHT_CONFIRMATION
-    while True:
-        try:
-            for trade in active_trades:
-                if trade["status"] == "Pending" and trade.get("rsi_trigger") is not None:
-                    symbol = SYMBOL_MAPPING.get(trade["coin"].lower())
-                    if not symbol:
-                        continue
-                    klines = binance_client.get_klines(
-                        symbol=symbol,
-                        interval=Client.KLINE_INTERVAL_1HOUR,
-                        limit=100
-                    )
-                    closes = [float(k[4]) for k in klines]
-                    highs = [float(k[2]) for k in klines]
-                    lows = [float(k[3]) for k in klines]
-                    volumes = [float(k[5]) for k in klines]
-                    current_rsi = calculate_rsi(closes)
-                    trade["current_rsi"] = current_rsi
-                    sma = calculate_sma(closes, SMA_PERIOD)
-                    ema_short = calculate_ema(closes, EMA_SHORT_PERIOD)
-                    ema_long = calculate_ema(closes, EMA_LONG_PERIOD)
-                    macd_line, macd_signal = calculate_macd(closes, MACD_FAST_PERIOD, MACD_SLOW_PERIOD, MACD_SIGNAL_PERIOD)
-                    stoch_k, stoch_d = calculate_stochastic(highs, lows, closes, STOCH_K_PERIOD, STOCH_D_PERIOD)
-                    bb_upper, bb_mid, bb_lower = calculate_bollinger_bands(closes, BOLLINGER_PERIOD, BOLLINGER_NUM_STD)
-                    avg_vol = calculate_average_volume(volumes, VOLUME_AVG_PERIOD)
-                    vol_confirm = volumes[-1] > VOLUME_CONFIRMATION_MULTIPLIER * avg_vol if avg_vol > 0 else False
-                    is_low_turn = is_low_turn_point(closes, TURN_POINT_WINDOW)
-                    # --- Buy Logic: Match backtest.py (RSI only) ---
-                    should_buy = False
-                    buy_reason = ""
-                    if current_rsi < RSI_OVERSOLD:
-                        should_buy = True
-                        buy_reason = f"RSI < {RSI_OVERSOLD}"
-                    # Log all indicator values and signal strength
-                    logger.info(f"[BUY CHECK] {symbol} | Price: {closes[-1]:.2f} | RSI: {current_rsi:.2f} | Reason: {buy_reason}")
-                    if should_buy:
-                        try:
-                            order = await execute_binance_order(
-                                symbol=symbol,
-                                side='BUY',
-                                order_type='MARKET',
-                                quantity=trade["quantity"]
-                            )
-                            trade["status"] = "Open"
-                            trade["binance_order_id"] = order['orderId']
-                            trade["entry_price"] = float(order['fills'][0]['price'])
-                            trade["current_price"] = float(order['fills'][0]['price'])
-                            trade["fees"] = sum(float(fill['commission']) for fill in order['fills'])
-                            save_trades()
-                            await broadcast_trade_update(trade)
-                            logger.info(f"Executed pending order for {symbol} at RSI {current_rsi:.2f} | Reason: {buy_reason}")
-                        except Exception as e:
-                            logger.error(f"Error executing pending order: {str(e)}")
-        except Exception as e:
-            logger.error(f"Error in monitor_pending_orders: {str(e)}")
-        await asyncio.sleep(10)  # Check every 10 seconds
-
-@app.on_event("startup")
-async def startup_event():
-    """Start background tasks on application startup."""
-    asyncio.create_task(monitor_trades())
-    asyncio.create_task(monitor_pending_orders())
-    logger.info("Background tasks started")
-
 @app.get("/price-history")
 async def get_price_history(symbol: str = 'BTCUSDT', limit: int = 500):
     """Return OHLCV price history for the given symbol (default: last 500 1h candles)."""
     try:
-        klines = binance_client.get_klines(symbol=symbol, interval=Client.KLINE_INTERVAL_1HOUR, limit=limit)
+        klines = binance_client.get_klines(symbol=symbol, interval=Client.KLINE_INTERVAL_5MINUTE, limit=limit)
         times = [datetime.fromtimestamp(k[0] / 1000).isoformat() for k in klines]
         opens = [float(k[1]) for k in klines]
         highs = [float(k[2]) for k in klines]
@@ -1845,6 +1618,78 @@ async def get_price_history(symbol: str = 'BTCUSDT', limit: int = 500):
 async def get_trade_history(user: str = Depends(require_auth)):
     """Return the trade history (closed trades) as JSON."""
     return JSONResponse(trade_history)
+
+@app.post("/auto-buy")
+async def auto_buy(trade_request: TradeRequest, user: str = Depends(require_auth)):
+    """Create a pending trade that will execute when a low turn point (turning point for buy) is detected."""
+    try:
+        symbol = SYMBOL_MAPPING.get(trade_request.coin.lower())
+        if not symbol:
+            raise HTTPException(status_code=400, detail=f"Unsupported coin: {trade_request.coin}")
+        logger.info(f"Starting auto-buy process for {symbol}")
+        usdt_balance = await get_binance_balance('USDT')
+        if usdt_balance < float(trade_request.amount):
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Insufficient USDT balance. Required: {float(trade_request.amount):.2f} USDT, Available: {usdt_balance:.2f} USDT"
+            )
+        ticker = binance_client.get_symbol_ticker(symbol=symbol)
+        current_price = float(ticker['price'])
+        quantity = float(trade_request.amount) / current_price
+        exchange_info = binance_client.get_exchange_info()
+        symbol_info = next((s for s in exchange_info['symbols'] if s['symbol'] == symbol), None)
+        lot_size_filter = next((f for f in symbol_info['filters'] if f['filterType'] == 'LOT_SIZE'), None)
+        step_size = float(lot_size_filter['stepSize'])
+        min_qty = float(lot_size_filter['minQty'])
+        precision = len(str(step_size).rstrip('0').split('.')[-1])
+        quantity = math.ceil(quantity / step_size) * step_size
+        formatted_quantity = format(quantity, f'.{precision}f')
+        if float(formatted_quantity) < min_qty:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Calculated quantity {formatted_quantity} is below minimum {min_qty} for {symbol}"
+            )
+        trade = {
+            "id": str(uuid.uuid4()),
+            "coin": trade_request.coin,
+            "amount_usdt": float(trade_request.amount),
+            "quantity": float(formatted_quantity),
+            "order_type": trade_request.order_type,
+            "entry_price": None,
+            "current_price": current_price,
+            "status": "Pending",
+            "limit_price": None,
+            "entry_time": format_datetime(datetime.now().isoformat()),
+            "profit_loss": 0.0,
+            "fees": 0.0,
+            "roi": 0.0,
+            "binance_order_id": None,
+            "take_profit": trade_request.take_profit if trade_request.take_profit is not None else DEFAULT_MARGIN,
+            "take_profit_type": "dollar",
+            "stop_loss": trade_request.stop_loss,
+            "auto_buy_loop": True,  # Mark this trade for auto-rebuy
+            "auto_buy_iteration": 1  # Initial auto-buy
+        }
+        active_trades.append(trade)
+        save_trades()
+        await broadcast_trade_update(trade)
+        return {
+            "status": "success",
+            "message": f"Pending order created. Will execute when a low turn point is detected.",
+            "trade": trade
+        }
+    except HTTPException as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Unexpected error in auto-buy: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Unexpected error: {str(e)}")
+
+@app.on_event("startup")
+async def startup_event():
+    """Start background tasks on application startup."""
+    asyncio.create_task(monitor_trades())
+    asyncio.create_task(monitor_pending_orders())
+    logger.info("Background tasks started")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Run the FastAPI application')
