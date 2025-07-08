@@ -261,6 +261,7 @@ try:
     
     # Initialize client
     binance_client = Client(BINANCE_API_KEY, BINANCE_API_SECRET)
+    binance_client.API_URL = 'https://testnet.binance.vision/api'
     
     # Synchronize time with Binance server
     time_diff = sync_time()

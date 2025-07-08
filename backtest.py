@@ -19,8 +19,8 @@ logger = logging.getLogger(__name__)
 
 # === USER SETTINGS ===
 SYMBOL = 'BTCUSDT'         # Symbol to backtest
-TRADE_SIZE = 80         # Amount (USDT) you enter with per trade
-INITIAL_BALANCE = 100    # Starting balance in USDT
+TRADE_SIZE = 8000         # Amount (USDT) you enter with per trade
+INITIAL_BALANCE = 10000    # Starting balance in USDT
 DAYS = 30
 
 
@@ -168,7 +168,29 @@ def simulate_strategy(klines: List[List[Any]]) -> (List[dict], float):
                 auto_buy_iteration += 1
                 entry_price = 0.0
                 quantity = 0.0
-                # After sell, immediately look for next buy (auto-buy loop)
+                i += 1
+                continue
+            # Stop loss logic (now last)
+            stop_loss_pct = STOP_LOSS_PERCENTAGE  # from config
+            if ((current_price - entry_price) / entry_price) * 100 <= -stop_loss_pct:
+                # SELL due to stop loss
+                fee = current_price * quantity * TRADING_FEE
+                balance += (current_price * quantity) - fee
+                trades.append({
+                    'type': 'SELL',
+                    'entry_price': entry_price,
+                    'exit_price': current_price,
+                    'profit': (current_price - entry_price) * quantity,
+                    'profit_pct': ((current_price - entry_price) / entry_price) * 100,
+                    'entry_time': entry_time,
+                    'exit_time': current_time,
+                    'auto_buy_iteration': auto_buy_iteration,
+                    'reason': 'Stop Loss'
+                })
+                in_position = False
+                auto_buy_iteration += 1
+                entry_price = 0.0
+                quantity = 0.0
                 i += 1
                 continue
         # --- BUY LOGIC ---

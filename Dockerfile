@@ -15,7 +15,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Expose the port FastAPI will run on
-EXPOSE 9000
+EXPOSE 10000
 
 # Set environment variables (if needed, .env will be used by python-dotenv)
 ENV PYTHONUNBUFFERED=1
