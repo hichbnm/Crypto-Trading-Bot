@@ -11,7 +11,7 @@ BINANCE_API_SECRET = os.getenv('BINANCE_API_SECRET', '')
 # Trading Configuration
 TRADING_FEE = 0.001  # 0.1% trading fee
 TAKE_PROFIT_PERCENTAGE = 4  # 4% take profit (match backtest.py)
-STOP_LOSS_PERCENTAGE = 10  # 10% stop loss (match backtest.py)
+STOP_LOSS_PERCENTAGE = 2  # 10% stop loss (match backtest.py)
 DEFAULT_MARGIN = 0.25  # Default margin in USDT for trades
 RSI_PERIOD = 16  # RSI lookback period (match backtest.py)
 RSI_OVERSOLD = 25  # RSI buy threshold (match backtest.py)

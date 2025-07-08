@@ -583,6 +583,64 @@
         .stop-loss-container label[for="enable_stop_loss"] {
             margin-bottom: 0;
         }
+
+        .take-profit-container {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-top: 4px;
+        }
+        .take-profit-container input[type="number"] {
+            flex: 1;
+            min-width: 0;
+            padding: 0.5rem 0.75rem;
+            font-size: 1rem;
+            border-radius: 4px 0 0 4px;
+            border: 1px solid var(--border-color);
+            height: 40px;
+        }
+        .take-profit-container select {
+            width: 70px;
+            padding: 0.5rem 0.75rem;
+            font-size: 1rem;
+            border-radius: 0 4px 4px 0;
+            border: 1px solid var(--border-color);
+            border-left: none;
+            height: 40px;
+            background: #fff;
+            color: #333;
+        }
+
+        /* New styles for chart range buttons */
+        .chart-range-group {
+            display: flex;
+            gap: 5px; /* Space between buttons */
+            margin-bottom: 1rem;
+        }
+
+        .chart-range-btn {
+            background-color: var(--light-bg);
+            border: 1px solid var(--border-color);
+            padding: 0.5rem 1rem;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            font-weight: 500;
+            transition: all 0.3s ease;
+            color: var(--primary-color);
+        }
+
+        .chart-range-btn:hover {
+            background-color: #e0e0e0;
+            border-color: var(--info-color);
+            color: var(--info-color);
+        }
+
+        .chart-range-btn.active {
+            background-color: var(--primary-color);
+            color: var(--white);
+            border-color: var(--primary-color);
+        }
     </style>
 </head>
 <body>
@@ -619,7 +677,7 @@
     <main>
         <div class="container">
             <div class="trading-form">
-                <h2>Version 2 – Armen’s high/low curves strategy.</h2>
+                <h2>Version 2 – Armen's high/low curves strategy.</h2>
                 <div id="error-container"></div>
                 <form id="tradeForm" onsubmit="return false">
                     <div class="form-group">
@@ -641,12 +699,15 @@
                         <input type="number" id="amount" name="amount" step="0.01" required>
                     </div>
                     <div class="form-group">
-                        <label for="take_profit">Margin (USDT)</label>
-                        <div class="margin-container">
-                            <input type="number" id="take_profit" name="take_profit" step="0.01" min="0.01" value="{{ config.DEFAULT_MARGIN if config else 0.25 }}">
-                            <span style="color: #666; font-weight: 500;">USDT</span>
+                        <label for="take_profit">Margin</label>
+                        <div class="take-profit-container">
+                            <input type="number" id="take_profit" name="take_profit" step="0.0001" min="0.0001" value="{{ config.DEFAULT_MARGIN if config else 0.25 }}" placeholder="Enter margin value">
+                            <select id="take_profit_type" name="take_profit_type">
+                                <option value="dollar">$</option>
+                                <option value="percentage" selected>%</option>
+                            </select>
                         </div>
-                        <div class="hint">Used for turning point detection only. Default: ${{ config.DEFAULT_MARGIN if config else 0.25 }} USDT</div>
+                        <div class="hint" id="margin-hint">Used for turning point detection only. Default: ${{ config.DEFAULT_MARGIN if config else 0.25 }} USDT</div>
                     </div>
                     <div class="form-group">
                         <label for="stop_loss">Stop Loss (%)</label>
@@ -678,6 +739,14 @@
             </div>
 
             <div class="trade-report">
+                
+                <div class="form-group">
+                    <div class="chart-range-group" id="chart-range-group">
+                        <button type="button" class="chart-range-btn active" data-range="1">1 Day</button>
+                        <button type="button" class="chart-range-btn" data-range="7">7 Days</button>
+                        <button type="button" class="chart-range-btn" data-range="30">30 Days</button>
+                    </div>
+                </div>
                 <button id="toggleChartBtn" style="margin-bottom: 1rem;">Hide Chart</button>
                 
                 <div id="tradeChart" style="width:100%;height:500px;margin-bottom:2rem;"></div>
@@ -777,7 +846,7 @@
                         ${parseFloat(trade.profit_loss).toFixed(2)}
                     </td>
                     <td>${parseFloat(trade.fees).toFixed(2)}</td>
-                    <td>$${parseFloat(trade.take_profit).toFixed(2)}</td>
+                    <td class="take-profit">${trade.take_profit_type === 'dollar' ? `$${parseFloat(trade.take_profit).toFixed(2)}` : `${parseFloat(trade.take_profit).toFixed(2)}%`}</td>
                     <td>${parseFloat(trade.stop_loss).toFixed(1)}%</td>
                     <td class="${trade.roi > 0 ? 'profit' : 'loss'}">
                         ${parseFloat(trade.roi).toFixed(2)}%

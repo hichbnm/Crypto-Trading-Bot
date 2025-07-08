@@ -873,6 +873,21 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
     }
+
+    // Chart range button group logic
+    const chartRangeGroup = document.getElementById('chart-range-group');
+    if (chartRangeGroup) {
+        chartRangeGroup.addEventListener('click', function(e) {
+            if (e.target.classList.contains('chart-range-btn')) {
+                // Remove 'active' from all buttons
+                document.querySelectorAll('.chart-range-btn').forEach(btn => btn.classList.remove('active'));
+                // Add 'active' to clicked button
+                e.target.classList.add('active');
+                // Update chart
+                plotTradeChart();
+            }
+        });
+    }
 });
 
 // Add this function after the existing functions
@@ -983,10 +998,10 @@ async function fetchTradeHistory() {
     return Array.isArray(data) ? data : [];
 }
 
-async function fetchPriceHistory(symbol) {
+async function fetchPriceHistory(symbol, range) {
     try {
-        console.log(`Fetching price history for ${symbol}...`);
-        const response = await fetch(`/price-history?symbol=${symbol}`);
+        console.log(`Fetching price history for ${symbol} with range ${range}...`);
+        const response = await fetch(`/price-history?symbol=${symbol}&range=${range}`);
         console.log(`Response status for ${symbol}:`, response.status);
         
         if (!response.ok) {
@@ -1037,7 +1052,9 @@ async function plotTradeChart() {
     
     // Always use BTC for the chart
     const symbol = 'BTCUSDT';
-    console.log('Using symbol:', symbol);
+    const activeBtn = document.querySelector('.chart-range-btn.active');
+    const range = activeBtn ? activeBtn.getAttribute('data-range') : '1'; // Default to 1 day if not found
+    console.log('Using symbol:', symbol, 'with range:', range);
 
     // Color for BTC
     const color = '#26a69a'; // BTC - Teal
@@ -1053,7 +1070,7 @@ async function plotTradeChart() {
 
     try {
         // Fetch price data for BTC
-        const priceData = await fetchPriceHistory(symbol);
+        const priceData = await fetchPriceHistory(symbol, range);
         console.log('Price data for BTC:', priceData ? 'received' : 'failed');
         
         if (!priceData || !priceData.closes || priceData.closes.length === 0) {
@@ -1198,8 +1215,19 @@ async function plotTradeChart() {
             showlegend: false
         };
 
+        // Orange points (peaks where no sell)
+        const orangePoints = (priceData.orange_points || []);
+        const orangeMarkers = {
+            x: orangePoints.map(pt => pt.time),
+            y: orangePoints.map(pt => pt.price),
+            mode: 'markers',
+            marker: { color: 'orange', size: 14, symbol: 'circle' },
+            name: 'Peak (No Sell)',
+            hovertemplate: 'Peak Price: <b>$%{y:,.2f}</b><br>Time: %{x}<extra></extra>',
+            showlegend: true
+        };
         // Combine all traces
-        const allData = [priceTrace, buyMarkers, sellMarkers, volumeTrace];
+        const allData = [priceTrace, buyMarkers, sellMarkers, orangeMarkers, volumeTrace];
         console.log('Total traces to plot:', allData.length);
 
         // Check if chart container exists

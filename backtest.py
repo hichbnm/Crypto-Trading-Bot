@@ -23,6 +23,7 @@ TRADE_SIZE = 80         # Amount (USDT) you enter with per trade
 INITIAL_BALANCE = 100    # Starting balance in USDT
 DAYS = 30
 
+
                   # Number of days to backtest
 # All other user settings are imported from config.py
 # === END USER SETTINGS ===
@@ -135,7 +136,6 @@ def simulate_strategy(klines: List[List[Any]]) -> (List[dict], float):
     margin = TURNING_POINT_MARGIN
     window = TURN_POINT_WINDOW
     take_profit_pct = TAKE_PROFIT_PERCENTAGE
-    stop_loss_pct = STOP_LOSS_PERCENTAGE
     trade_size = TRADE_SIZE
     i = window
     while i < len(klines):
@@ -169,46 +169,6 @@ def simulate_strategy(klines: List[List[Any]]) -> (List[dict], float):
                 entry_price = 0.0
                 quantity = 0.0
                 # After sell, immediately look for next buy (auto-buy loop)
-                i += 1
-                continue
-            # Take profit
-            if profit_pct >= take_profit_pct:
-                fee = current_price * quantity * TRADING_FEE
-                balance += (current_price * quantity) - fee
-                trades.append({
-                    'type': 'SELL',
-                    'entry_price': entry_price,
-                    'exit_price': current_price,
-                    'profit': profit,
-                    'profit_pct': profit_pct,
-                    'entry_time': entry_time,
-                    'exit_time': current_time,
-                    'auto_buy_iteration': auto_buy_iteration
-                })
-                in_position = False
-                auto_buy_iteration += 1
-                entry_price = 0.0
-                quantity = 0.0
-                i += 1
-                continue
-            # Stop loss
-            if profit_pct <= -stop_loss_pct:
-                fee = current_price * quantity * TRADING_FEE
-                balance += (current_price * quantity) - fee
-                trades.append({
-                    'type': 'SELL',
-                    'entry_price': entry_price,
-                    'exit_price': current_price,
-                    'profit': profit,
-                    'profit_pct': profit_pct,
-                    'entry_time': entry_time,
-                    'exit_time': current_time,
-                    'auto_buy_iteration': auto_buy_iteration
-                })
-                in_position = False
-                auto_buy_iteration += 1
-                entry_price = 0.0
-                quantity = 0.0
                 i += 1
                 continue
         # --- BUY LOGIC ---

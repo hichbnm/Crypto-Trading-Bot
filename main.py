@@ -1,5 +1,5 @@
 from fastapi import FastAPI, Form, HTTPException, WebSocket, Request, Depends, Response
-from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -349,6 +349,9 @@ active_trades, trade_history = load_trades()
 # Add this global set near the top of the file, after other globals
 canceled_auto_buy_coins = set()
 
+# Add global dict to store orange points per symbol
+orange_points_by_symbol = {}
+
 async def execute_binance_order(symbol: str, side: str, order_type: str, quantity: float, price: float = None) -> dict:
     """
     Execute a real order on Binance
@@ -618,7 +621,7 @@ async def broadcast_trade_update(trade=None):
                 "fees": active_trade.get("fees", 0.0),
                 "roi": active_trade.get("roi", 0.0),
                 "take_profit": active_trade.get("take_profit", TAKE_PROFIT_PERCENTAGE),
-                "take_profit_type": "dollar",
+                "take_profit_type": active_trade.get("take_profit_type", "dollar"),
                 "stop_loss": active_trade.get("stop_loss"),  # Just pass the value as is
                 "entry_time": format_datetime(active_trade.get("entry_time")) if active_trade.get("entry_time") else "N/A"
             }
@@ -691,17 +694,49 @@ async def lifespan(app: FastAPI):
                                 stop_loss_hit = trade.get("stop_loss") is not None and profit_percentage <= -trade["stop_loss"]
                                 is_high_turn = is_high_turn_point(closes, TURN_POINT_WINDOW)
                                 logger.info(f"[SELL LOGIC] Checking for high turn point: is_high_turn={is_high_turn}")
+                                # Always log the required price drop and margin info
+                                margin_value = trade.get("take_profit", TURNING_POINT_MARGIN)
+                                margin_type = trade.get("take_profit_type", "dollar")
+                                if margin_type == "percentage":
+                                    required_profit = (margin_value / 100) * trade["amount_usdt"]
+                                    required_price_drop = required_profit / trade['quantity']
+                                else:
+                                    required_profit = margin_value * trade['quantity']
+                                    required_price_drop = margin_value
+                                logger.info(
+                                    f"[SELL LOGIC] Required price drop for margin: {required_price_drop:.6f} "
+                                    f"Turning Point Sell (Profit: ${trade['profit_loss']:.2f} > Required Profit: ${required_profit:.2f} | Margin Param: {margin_value:.2f}{'%' if margin_type == 'percentage' else '$'})"
+                                )
                                 if is_high_turn and len(closes) >= TURN_POINT_WINDOW and closes[-1] < closes[-2] and closes[-2] < closes[-3]:
                                     peak_price = closes[- (TURN_POINT_WINDOW // 2) - 1]
                                     price_drop_from_peak = peak_price - closes[-1]
-                                    # Calculate required price drop based on margin (always in USDT)
+                                    margin_type = trade.get("take_profit_type", "dollar")
                                     margin_value = trade.get("take_profit", TURNING_POINT_MARGIN)
-                                    required_price_drop = margin_value / trade['quantity']
+                                    if margin_type == "percentage":
+                                        required_profit = (margin_value / 100) * trade["amount_usdt"]
+                                        required_price_drop = required_profit / trade['quantity']
+                                    else:
+                                        required_profit = margin_value * trade['quantity']
+                                        required_price_drop = margin_value
                                     logger.info(f"[SELL LOGIC] peak_price={peak_price}, current_price={closes[-1]}, price_drop_from_peak={price_drop_from_peak}, required_price_drop={required_price_drop}, margin_value={margin_value}")
                                     # Check if current profit exceeds the margin threshold
                                     if trade['profit_loss'] > margin_value:
                                         should_sell = True
-                                        sell_reason = f"Turning Point Sell (Profit: ${trade['profit_loss']:.2f} > Margin: ${margin_value:.2f})"
+                                        sell_reason = f"Turning Point Sell (Profit: ${trade['profit_loss']:.2f} > Margin: {margin_value:.2f}{'%' if margin_type == 'percentage' else '$'})"
+                                    else:
+                                        logger.info(
+                                            f"[SELL LOGIC] High turn detected and 3 down candles, but profit condition not met: "
+                                            f"profit_loss={trade['profit_loss']:.2f}, margin_value={margin_value:.2f}{'%' if margin_type == 'percentage' else '$'}"
+                                        )
+                                        # Record orange point for this symbol
+                                        symbol_orange_points = orange_points_by_symbol.setdefault(symbol, [])
+                                        peak_time = klines[- (TURN_POINT_WINDOW // 2) - 1][0] // 1000  # timestamp in seconds
+                                        peak_time_iso = datetime.fromtimestamp(peak_time).isoformat()
+                                        if not any(pt['time'] == peak_time_iso for pt in symbol_orange_points):
+                                            symbol_orange_points.append({
+                                                "time": peak_time_iso,
+                                                "price": peak_price
+                                            })
                                 elif stop_loss_hit:
                                     should_sell = True
                                     sell_reason = "Stop Loss"
@@ -760,14 +795,25 @@ async def lifespan(app: FastAPI):
                                 price_rise_from_trough = closes[-1] - trough_price
                                 # Calculate required price increase based on margin (always in USDT)
                                 margin_value = trade.get("take_profit", TURNING_POINT_MARGIN)
-                                required_price_increase = margin_value / trade['quantity']
-                                logger.info(f"[BUY LOGIC] Subsequent buy: trough_price={trough_price}, current_price={closes[-1]}, price_rise_from_trough={price_rise_from_trough}, required_price_increase={required_price_increase}, margin_value={margin_value}")
-                                
+                                margin_type = trade.get("take_profit_type", "dollar")
+                                if margin_type == "percentage":
+                                    required_profit = (margin_value / 100) * trade["amount_usdt"]
+                                    required_price_increase = required_profit / trade['quantity']
+                                else:
+                                    required_profit = margin_value * trade['quantity']
+                                    required_price_increase = margin_value
+                                logger.info(
+                                    f"[BUY LOGIC] Required price increase for margin: {required_price_increase:.6f} "
+                                    f"Turning Point Buy (Price Rise: {price_rise_from_trough:.6f} > Required Profit: ${required_profit:.2f} | Margin Param: {margin_value:.2f}{'%' if margin_type == 'percentage' else '$'})"
+                                )
                                 if price_rise_from_trough > required_price_increase:
                                     should_buy = True
                                     logger.info(f"[BUY LOGIC] Subsequent buy: Low turn point detected with sufficient price rise - executing buy order")
                                 else:
-                                    logger.info(f"[BUY LOGIC] Subsequent buy: Low turn point detected but price rise insufficient ({price_rise_from_trough:.2f} < {required_price_increase:.2f})")
+                                    logger.info(
+                                        f"[BUY LOGIC] Low turn detected and 3 up candles, but price rise/profit condition not met: "
+                                        f"price_rise_from_trough={price_rise_from_trough:.2f}, required_price_increase={required_price_increase:.2f}, required_profit={required_profit:.2f}"
+                                     )
                             
                         if should_buy:
                                 try:
@@ -1119,7 +1165,7 @@ async def _create_trade_logic(trade_request: TradeRequest):
             "roi": 0.0,
             "binance_order_id": order['orderId'],  # Store Binance order ID
             "take_profit": trade_request.take_profit if trade_request.take_profit is not None else DEFAULT_MARGIN,
-            "take_profit_type": "dollar",
+            "take_profit_type": trade_request.take_profit_type if trade_request.take_profit_type else "dollar",
             "stop_loss": trade_request.stop_loss,
             "auto_buy_loop": True,  # Mark this trade for auto-rebuy
             "auto_buy_iteration": 2 if trade_request.order_type == "market" else 1  # For market: next buy is subsequent, for limit: next buy is initial
@@ -1592,23 +1638,30 @@ def print_rsi_status(symbol: str, rsi: float, is_oversold: bool = False):
     print("="*50 + "\n")
 
 @app.get("/price-history")
-async def get_price_history(symbol: str = 'BTCUSDT', limit: int = 500):
-    """Return OHLCV price history for the given symbol (default: last 500 1h candles)."""
+async def get_price_history(symbol: str = 'BTCUSDT', range: int = 1):
+    """Return OHLCV price history for the given symbol and range in days (1, 7, 30). Also returns orange points for high turn peaks where profit condition is not met."""
     try:
-        klines = binance_client.get_klines(symbol=symbol, interval=Client.KLINE_INTERVAL_5MINUTE, limit=limit)
+        end_time = datetime.now()
+        start_time = end_time - timedelta(days=range)
+        start_str = start_time.strftime('%Y-%m-%d')
+        end_str = end_time.strftime('%Y-%m-%d')
+        klines = binance_client.get_historical_klines(symbol, Client.KLINE_INTERVAL_5MINUTE, start_str, end_str)
         times = [datetime.fromtimestamp(k[0] / 1000).isoformat() for k in klines]
         opens = [float(k[1]) for k in klines]
         highs = [float(k[2]) for k in klines]
         lows = [float(k[3]) for k in klines]
         closes = [float(k[4]) for k in klines]
         volumes = [float(k[5]) for k in klines]
+        # Get orange points for this symbol in the requested time range
+        orange_points = [pt for pt in orange_points_by_symbol.get(symbol, []) if pt['time'] >= times[0] and pt['time'] <= times[-1]]
         return JSONResponse({
             "times": times,
             "opens": opens,
             "highs": highs,
             "lows": lows,
             "closes": closes,
-            "volumes": volumes
+            "volumes": volumes,
+            "orange_points": orange_points
         })
     except Exception as e:
         logger.error(f"Error fetching price history: {str(e)}")
@@ -1665,7 +1718,7 @@ async def auto_buy(trade_request: TradeRequest, user: str = Depends(require_auth
             "roi": 0.0,
             "binance_order_id": None,
             "take_profit": trade_request.take_profit if trade_request.take_profit is not None else DEFAULT_MARGIN,
-            "take_profit_type": "dollar",
+            "take_profit_type": trade_request.take_profit_type if trade_request.take_profit_type else "dollar",
             "stop_loss": trade_request.stop_loss,
             "auto_buy_loop": True,  # Mark this trade for auto-rebuy
             "auto_buy_iteration": 1  # Initial auto-buy
@@ -1690,6 +1743,45 @@ async def startup_event():
     asyncio.create_task(monitor_trades())
     asyncio.create_task(monitor_pending_orders())
     logger.info("Background tasks started")
+
+@app.get("/logs/trading_bot.log")
+def get_trading_log():
+    """Serve the trading log file as plain text in the browser."""
+    log_path = os.path.join("logs", "trading_bot.log")
+    if not os.path.exists(log_path):
+        return JSONResponse({"error": "Log file not found."}, status_code=404)
+    def iterfile():
+        with open(log_path, mode="r", encoding="utf-8") as file:
+            for line in file:
+                yield line
+    return StreamingResponse(iterfile(), media_type="text/plain")
+
+@app.get("/api/chart-data")
+async def get_chart_data(days: int = 1, symbol: str = 'BTCUSDT'):
+    """Return OHLCV price history for the given symbol and number of days."""
+    try:
+        end_time = datetime.now()
+        start_time = end_time - timedelta(days=days)
+        start_str = start_time.strftime('%Y-%m-%d')
+        end_str = end_time.strftime('%Y-%m-%d')
+        klines = binance_client.get_historical_klines(symbol, Client.KLINE_INTERVAL_5MINUTE, start_str, end_str)
+        times = [datetime.fromtimestamp(k[0] / 1000).isoformat() for k in klines]
+        opens = [float(k[1]) for k in klines]
+        highs = [float(k[2]) for k in klines]
+        lows = [float(k[3]) for k in klines]
+        closes = [float(k[4]) for k in klines]
+        volumes = [float(k[5]) for k in klines]
+        return JSONResponse({
+            "times": times,
+            "opens": opens,
+            "highs": highs,
+            "lows": lows,
+            "closes": closes,
+            "volumes": volumes
+        })
+    except Exception as e:
+        logger.error(f"Error fetching chart data: {str(e)}")
+        return JSONResponse({"error": str(e)}, status_code=500)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Run the FastAPI application')

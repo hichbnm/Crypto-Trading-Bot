@@ -546,3 +546,32 @@ tr:hover {
     margin-left: 0.5rem;
     font-weight: normal;
 } 
+
+.chart-range-group {
+    display: flex;
+    gap: 0.5rem;
+    margin-bottom: 1rem;
+}
+
+.chart-range-btn {
+    padding: 0.5rem 1.2rem;
+    border: 1.5px solid var(--info-color, #3498db);
+    background: #fff;
+    color: var(--info-color, #3498db);
+    border-radius: 999px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.2s, color 0.2s, box-shadow 0.2s;
+    outline: none;
+}
+
+.chart-range-btn.active,
+.chart-range-btn:focus {
+    background: var(--info-color, #3498db);
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(52,152,219,0.08);
+}
+
+.chart-range-btn:hover:not(.active) {
+    background: #eaf6fd;
+} 
