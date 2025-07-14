@@ -64,7 +64,7 @@ let isConnected = false;
 let reconnectAttempts = 0;
 const maxReconnectAttempts = 5;
 const reconnectDelay = 3000; // 3 seconds
-const activeTradesMap = new Map(); // Keep track of active trades
+let activeTradesMap = new Map(); // Keep track of active trades
 
 // Global variables for Stop Loss elements
 let enableStopLossCheckbox;
@@ -230,7 +230,7 @@ function updateTradeData(trade) {
         row.querySelector('.coin').textContent = trade.coin;
         row.querySelector('.amount').textContent = `${parseFloat(trade.amount_usdt).toFixed(2)} USDT`;
         row.querySelector('.entry-price').textContent = parseFloat(trade.entry_price).toFixed(2);
-        row.querySelector('.current-price').textContent = `$${parseFloat(trade.current_price).toFixed(2)}`;
+        row.querySelector('.current-price').textContent = trade.current_price != null ? `$${Number(trade.current_price).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}` : 'N/A';
         
         // Update P/L
         const plCell = row.querySelector('.profit-loss');
@@ -238,7 +238,7 @@ function updateTradeData(trade) {
         plCell.className = `profit-loss ${parseFloat(trade.profit_loss) >= 0 ? 'positive' : 'negative'}`;
         
         // Update fees
-        row.querySelector('.fees').textContent = parseFloat(trade.fees).toFixed(2);
+        row.querySelector('.fees').textContent = parseFloat(trade.buy_fee ?? trade.fees).toFixed(3);
         
         row.querySelector('.take-profit').textContent = `${parseFloat(trade.take_profit).toFixed(1)}%`;
         row.querySelector('.stop-loss').textContent = `${parseFloat(trade.stop_loss).toFixed(1)}%`;
@@ -277,11 +277,11 @@ function updateTradeData(trade) {
             <td class="coin">${trade.coin}</td>
             <td class="amount">$${parseFloat(trade.amount_usdt).toFixed(2)} USDT</td>
             <td class="entry-price">${trade.status === "Pending" ? 'N/A' : `$${parseFloat(trade.entry_price).toFixed(2)}`}</td>
-            <td class="current-price">$${parseFloat(trade.current_price).toFixed(2)}</td>
+            <td class="current-price">$${trade.current_price != null ? Number(trade.current_price).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : 'N/A'}</td>
             <td class="profit-loss ${parseFloat(trade.profit_loss) >= 0 ? 'positive' : 'negative'}">
                 $${parseFloat(trade.profit_loss).toFixed(2)}
             </td>
-            <td class="fees">$${parseFloat(trade.fees).toFixed(2)}</td>
+            <td class="fees">$${parseFloat(trade.buy_fee ?? trade.fees).toFixed(3)}</td>
             <td class="take-profit">${parseFloat(trade.take_profit).toFixed(1)}%</td>
             <td class="stop-loss">${parseFloat(trade.stop_loss).toFixed(1)}%</td>
             <td class="roi ${parseFloat(trade.roi) > 0 ? 'profit' : 'loss'}">${parseFloat(trade.roi).toFixed(2)}%</td>
@@ -369,7 +369,7 @@ function connectWebSocket() {
                         
                         // Update current price
                         const priceCell = row.querySelector('.current-price');
-                        priceCell.textContent = `$${parseFloat(trade.current_price).toFixed(2)}`;
+                        priceCell.textContent = trade.current_price != null ? `$${Number(trade.current_price).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})}` : 'N/A';
                     }
                 });
                 
@@ -427,9 +427,13 @@ function handleTradeSubmit(event) {
     
     const formData = new FormData(form);
     
+    let amountRaw = formData.get('amount');
+    if (typeof amountRaw === 'string') {
+        amountRaw = amountRaw.replace(',', '.');
+    }
     const tradeData = {
         coin: formData.get('coin'),
-        amount: parseFloat(formData.get('amount')),
+        amount: parseFloat(amountRaw),
         order_type: formData.get('order_type'),
         limit_price: formData.get('order_type') === 'limit' ? parseFloat(formData.get('limit_price')) : null,
         take_profit: parseFloat(formData.get('take_profit')),
@@ -595,14 +599,17 @@ function updateActiveTradesTable(trades) {
     activeTradesMap.clear();
     
     if (!trades || trades.length === 0) {
-        // Add "No active trades" message
-        const noTradesRow = document.createElement('tr');
-        noTradesRow.innerHTML = `
-            <td colspan="11" style="text-align: center; padding: 20px; color: #666; font-style: italic;">
-                No active trades to display
-            </td>
-        `;
-        tbody.appendChild(noTradesRow);
+        // No active trades, show centered message
+        const row = document.createElement('tr');
+        row.innerHTML = `<td colspan="14" style="text-align: center; padding: 20px; color: #777;">No active trades to display.</td>`;
+        tbody.appendChild(row);
+        document.getElementById('active-trades-count').textContent = '0';
+        // Also update header P/L values to 0
+        const totalPLSpan = document.getElementById('total-pl');
+        const activePLSpan = document.getElementById('active-pl');
+        if (totalPLSpan) totalPLSpan.textContent = '$0.00';
+        if (activePLSpan) activePLSpan.textContent = 'Active: $0.00';
+        return;
     } else {
         trades.forEach(trade => {
             // Store in map regardless of validation
@@ -659,19 +666,24 @@ function addTradeToTable(trade) {
         ? 'N/A' 
         : `${formatNumber(trade.stop_loss)}%`;
 
+    // For the Entry Time cell, show 'N/A' if the trade is not filled (status not 'Open') or entry_time is missing
+    const entryTimeDisplay = (trade.status === 'Open' && trade.entry_time) ? trade.entry_time : 'N/A';
     row.innerHTML = `
+        <td class="buy-order-id">${trade.binance_order_id ? trade.binance_order_id : 'N/A'}</td>
         <td class="coin">${trade.coin}</td>
-        <td class="amount">$${formatNumber(trade.amount_usdt)} USDT</td>
+        <td class="amount">$${formatNumber(trade.amount_usdt)}</td>
+        <td class="filled-amount">${trade.status === 'Pending' ? 'N/A' : `$${typeof trade.filled_amount_usdt !== 'undefined' ? parseFloat(trade.filled_amount_usdt).toFixed(2) : parseFloat(trade.amount_usdt).toFixed(2)}`}</td>
         <td class="entry-price">${trade.status === "Pending" ? 'N/A' : `$${formatNumber(trade.entry_price)}`}</td>
-        <td class="current-price">$${formatNumber(trade.current_price)}</td>
+        <td class="current-price">$${trade.current_price != null ? Number(trade.current_price).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : 'N/A'}</td>
         <td class="profit-loss ${parseFloat(trade.profit_loss || 0) >= 0 ? 'positive' : 'negative'}">
             $${formatNumber(trade.profit_loss)}
         </td>
-        <td class="fees">$${formatNumber(trade.fees)}</td>
+        <td class="fees">$${parseFloat(trade.buy_fee ?? trade.fees).toFixed(3)}</td>
         <td class="take-profit">${takeProfitDisplay}</td>
         <td class="stop-loss">${stopLossDisplay}</td>
         <td class="roi ${parseFloat(trade.roi || 0) > 0 ? 'profit' : 'loss'}">${formatNumber(trade.roi)}%</td>
         <td class="status">${trade.status || 'Unknown'}</td>
+        <td class="entry-time">${entryTimeDisplay}</td>
         <td class="action">
             ${trade.status === "Open" ? 
                 `<button class="close-btn" onclick="closeTrade('${trade.id}')">Close</button>` : 
@@ -804,6 +816,13 @@ document.addEventListener('DOMContentLoaded', function() {
     if (amountInput) {
         amountInput.removeAttribute('step');
         amountInput.removeAttribute('min');
+    }
+
+    if (amountInput) {
+        // Replace comma with dot as user types
+        amountInput.addEventListener('input', function(e) {
+            this.value = this.value.replace(',', '.');
+        });
     }
     
     // Initial P/L update

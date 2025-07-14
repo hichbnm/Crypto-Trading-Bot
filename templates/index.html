@@ -35,13 +35,14 @@
         header {
             background: linear-gradient(135deg, var(--primary-color), var(--secondary-color));
             color: var(--white);
-            padding: 0.8rem;
+            padding: 0.08rem 0.5rem;
+            min-height: 24px;
             text-align: center;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
             position: sticky;
             top: 0;
             z-index: 1000;
-            border-bottom: 1px solid rgba(255,255,255,0.1);
+            border-bottom: 1px solid rgba(255,255,255,0.08);
         }
 
         main {
@@ -90,11 +91,12 @@
         }
 
         h1 {
-            font-size: 1.4rem;
+            font-size: 0.95rem;
+            line-height: 1.1;
+            margin: 0;
             font-weight: 600;
             letter-spacing: 0.5px;
             text-transform: uppercase;
-            margin: 0;
             background: linear-gradient(to right, #fff, #e0e0e0);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
@@ -696,7 +698,7 @@
 
                     <div class="form-group">
                         <label for="amount">Amount (USDT)</label>
-                        <input type="number" id="amount" name="amount" step="0.01" required>
+                        <input type="text" id="amount" name="amount" required>
                     </div>
                     <div class="form-group">
                         <label for="take_profit">Margin</label>
@@ -715,7 +717,7 @@
                             <input type="number" id="stop_loss" name="stop_loss" step="0.001" min="0.001">
                             <input type="checkbox" id="enable_stop_loss">
                             <label for="enable_stop_loss">Enable</label>
-                        </div>
+                        </div>detect
                         <div class="hint">Default: 5%</div>
                     </div>
                     <div class="form-group">
@@ -755,16 +757,19 @@
                 <table id="tradesTable">
                     <thead>
                         <tr>
+                            <th>Buy Order ID</th>
                             <th>Coin</th>
                             <th>Amount (USDT)</th>
+                            <th>Filled Amount (USDT)</th>
                             <th>Entry Price</th>
                             <th>Current Price</th>
                             <th>Profit/Loss</th>
-                            <th>Fees</th>
+                            <th>Buy Fee</th>
                             <th>Margin (TP)</th>
                             <th>Stop Loss</th>
                             <th>ROI</th>
                             <th>Status</th>
+                            <th>Entry Time</th>
                             <th>Action</th>
                         </tr>
                     </thead>
@@ -777,35 +782,49 @@
                 <table id="historyTable">
                     <thead>
                         <tr>
+                            <th>Sell Order ID</th>
                             <th>Coin</th>
                             <th>Amount (USDT)</th>
+                            <th>Filled Amount (USDT)</th>
+                            <th>Sell Amount</th>
                             <th>Entry Price</th>
                             <th>Exit Price</th>
                             <th>Profit/Loss</th>
                             <th>Fees</th>
+                            <th>Buy Fee</th>
+                            <th>Sell Fee</th>
                             <th>Status</th>
-                            <th>Time</th>
+                            <th>Duration</th>
+                            <th>Entry Time</th>
+                            <th>Exit Time</th>
                         </tr>
                     </thead>
                     <tbody id="historyTableBody">
                         {% if trade_history %}
                             {% for trade in trade_history %}
                             <tr>
+                                <td>{{ trade.sell_binance_order_id }}</td>
                                 <td>{{ trade.coin }}</td>
                                 <td>${{ "%.2f"|format(trade.amount_usdt) }}</td>
-                                <td>${{ "%.2f"|format(trade.entry_price) }}</td>
-                                <td>{% if trade.exit_price %}${{ "%.2f"|format(trade.exit_price) }}{% else %}N/A{% endif %}</td>
+                                <td>${{ "%.2f"|format(trade.filled_amount_usdt if trade.filled_amount_usdt is defined else trade.amount_usdt) }}</td>
+                                <td>{% if trade.sell_amount_usdt is defined and trade.sell_amount_usdt is not none %}${{ '%.2f'|format(trade.sell_amount_usdt) }}{% else %}N/A{% endif %}</td>
+                                <td>{{ trade.entry_price }}</td>
+                                <td>{% if trade.exit_price is not none %}{{ '{:,.2f}'.format(trade.exit_price) }}{% else %}N/A{% endif %}</td>
                                 <td class="profit-loss {{ 'positive' if trade.profit_loss >= 0 else 'negative' }}">
                                     ${{ "%.2f"|format(trade.profit_loss) }}
                                 </td>
-                                <td>${{ "%.2f"|format(trade.fees) }}</td>
+                                <td>${{ "%.3f"|format(trade.fees) }}</td>
+                                <td>${{ "%.3f"|format(trade.buy_fee | default(0.0)) }}</td>
+                                <td>${{ "%.3f"|format(trade.sell_fee | default(0.0)) }}</td>
                                 <td>{{ trade.status }}</td>
+                                <td>{{ trade.duration }}</td>
                                 <td>{{ trade.entry_time }}</td>
+                                <td>{{ trade.exit_time }}</td>
                             </tr>
                             {% endfor %}
                         {% else %}
                         <tr>
-                            <td colspan="8" style="text-align: center; padding: 20px; color: #777;">No trade history to display.</td>
+                            <td colspan="14" style="text-align: center; padding: 20px; color: #777;">No trade history to display.</td>
                         </tr>
                         {% endif %}
                     </tbody>
@@ -838,20 +857,26 @@
             activeTradesMap.forEach(trade => {
                 const row = document.createElement('tr');
                 row.innerHTML = `
+                    <td>
+                        ${trade.status === 'Open' && trade.binance_order_id ? trade.binance_order_id : ''}
+                    </td>
                     <td>${trade.coin}</td>
                     <td>${parseFloat(trade.amount_usdt).toFixed(2)} USDT</td>
+                    <td>${typeof trade.filled_amount_usdt !== 'undefined' ? parseFloat(trade.filled_amount_usdt).toFixed(2) : parseFloat(trade.amount_usdt).toFixed(2)} USDT</td>
+                    <td>${trade.sell_amount_usdt != null ? parseFloat(trade.sell_amount_usdt).toFixed(2) : 'N/A'} USDT</td>
                     <td>${parseFloat(trade.entry_price).toFixed(2)}</td>
-                    <td>${parseFloat(trade.current_price).toFixed(2)}</td>
+                    <td class="current-price">${trade.current_price != null ? Number(trade.current_price).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : 'N/A'}</td>
                     <td class="profit-loss ${trade.profit_loss >= 0 ? 'positive' : 'negative'}">
                         ${parseFloat(trade.profit_loss).toFixed(2)}
                     </td>
-                    <td>${parseFloat(trade.fees).toFixed(2)}</td>
+                    <td>${parseFloat(trade.fees).toFixed(3)}</td>
                     <td class="take-profit">${trade.take_profit_type === 'dollar' ? `$${parseFloat(trade.take_profit).toFixed(2)}` : `${parseFloat(trade.take_profit).toFixed(2)}%`}</td>
                     <td>${parseFloat(trade.stop_loss).toFixed(1)}%</td>
                     <td class="${trade.roi > 0 ? 'profit' : 'loss'}">
                         ${parseFloat(trade.roi).toFixed(2)}%
                     </td>
-                    <td>${trade.status}</td>
+                    <td class="status">${trade.status || 'Unknown'}</td>
+                    <td class="entry-time">${trade.entry_time ? trade.entry_time : 'N/A'}</td>
                     <td>
                         ${trade.status === "Open" 
                             ? `<button class="close-btn" onclick="closeTrade('${trade.id}')">Close</button>`
@@ -915,8 +940,6 @@
                 const data = JSON.parse(event.data);
                 if (data.type === 'trade_update') {
                     updateActiveTradesTable(data.trades);
-                    
-                    // Auto-refresh chart when trade data changes
                     try {
                         const chartContainer = document.getElementById('tradeChart');
                         if (chartContainer && chartContainer.style.display !== 'none' && chartContainer.style.opacity !== '0') {

@@ -83,8 +83,8 @@ def create_session(username: str) -> str:
     session_id = secrets.token_hex(16)
     sessions[session_id] = {
         "username": username,
-        "created_at": datetime.now(),
-        "expires_at": datetime.now() + timedelta(hours=24)
+        "created_at": datetime.utcnow(),
+        "expires_at": datetime.utcnow() + timedelta(hours=24)
     }
     return session_id
 
@@ -92,7 +92,7 @@ def get_session(session_id: str) -> Optional[dict]:
     """Get session data if it exists and is not expired"""
     if session_id in sessions:
         session = sessions[session_id]
-        if datetime.now() < session["expires_at"]:
+        if datetime.utcnow() < session["expires_at"]:
             return session
         else:
             del sessions[session_id]
@@ -254,6 +254,9 @@ SYMBOL_MAPPING = {
 # File paths for persistent storage
 TRADES_FILE = "trades.json"
 
+# File path for orange points persistence
+ORANGE_POINTS_FILE = "orange_points.json"
+
 # Initialize Binance client with API credentials
 try:
     if not BINANCE_API_KEY or not BINANCE_API_SECRET:
@@ -261,7 +264,7 @@ try:
     
     # Initialize client
     binance_client = Client(BINANCE_API_KEY, BINANCE_API_SECRET)
-    binance_client.API_URL = 'https://testnet.binance.vision/api'
+    #binance_client.API_URL = 'https://testnet.binance.vision/api'
     
     # Synchronize time with Binance server
     time_diff = sync_time()
@@ -352,6 +355,35 @@ canceled_auto_buy_coins = set()
 
 # Add global dict to store orange points per symbol
 orange_points_by_symbol = {}
+
+def load_orange_points():
+    """Load orange points from the JSON file."""
+    try:
+        if os.path.exists(ORANGE_POINTS_FILE):
+            with open(ORANGE_POINTS_FILE, 'r') as f:
+                content = f.read().strip()
+                if not content:
+                    return {}
+                try:
+                    data = json.loads(content)
+                    return data
+                except json.JSONDecodeError:
+                    logger.error(f"orange_points.json contains invalid JSON. Initializing as empty.")
+                    return {}
+    except Exception as e:
+        logger.error(f"Error loading orange points: {str(e)}")
+    return {}
+
+def save_orange_points():
+    """Save orange points to the JSON file."""
+    try:
+        with open(ORANGE_POINTS_FILE, 'w') as f:
+            json.dump(orange_points_by_symbol, f, indent=2)
+    except Exception as e:
+        logger.error(f"Error saving orange points: {str(e)}")
+
+# Load orange points from file on startup
+orange_points_by_symbol = load_orange_points()
 
 async def execute_binance_order(symbol: str, side: str, order_type: str, quantity: float, price: float = None) -> dict:
     """
@@ -615,16 +647,19 @@ async def broadcast_trade_update(trade=None):
                 "id": active_trade.get("id"),
                 "coin": active_trade.get("coin"),
                 "amount_usdt": active_trade.get("amount_usdt", active_trade.get("amount", 0.0)),
+                "filled_amount_usdt": active_trade.get("filled_amount_usdt", active_trade.get("amount_usdt", 0.0)),
                 "entry_price": active_trade.get("entry_price", 0.0),
                 "current_price": active_trade.get("current_price", 0.0),
                 "status": active_trade.get("status"),
                 "profit_loss": active_trade.get("profit_loss", 0.0),
-                "fees": active_trade.get("fees", 0.0),
+                "fees": active_trade.get("buy_fee", active_trade.get("fees", 0.0)),
                 "roi": active_trade.get("roi", 0.0),
                 "take_profit": active_trade.get("take_profit", TAKE_PROFIT_PERCENTAGE),
                 "take_profit_type": active_trade.get("take_profit_type", "dollar"),
                 "stop_loss": active_trade.get("stop_loss"),  # Just pass the value as is
-                "entry_time": format_datetime(active_trade.get("entry_time")) if active_trade.get("entry_time") else "N/A"
+                "entry_time": format_datetime(active_trade.get("entry_time")) if active_trade.get("entry_time") else "N/A",
+                "binance_order_id": active_trade.get("binance_order_id", ""),
+                "sell_binance_order_id": active_trade.get("sell_binance_order_id", "")
             }
             trades_data.append(trade_data)
         
@@ -677,7 +712,25 @@ async def lifespan(app: FastAPI):
                                 trade["status"] = "Open"
                                 trade["entry_price"] = current_price
                                 logger.info(f"Limit order executed for trade {trade['id']} at price {current_price}")
+                                # Fetch the order trades from Binance and set filled_amount_usdt
+                                try:
+                                    if symbol and trade.get("binance_order_id"):
+                                        trades = binance_client.get_my_trades(symbol=symbol)
+                                        order_trades = [t for t in trades if t['orderId'] == trade["binance_order_id"]]
+                                        filled_amount_usdt = sum(float(t['qty']) * float(t['price']) for t in order_trades)
+                                        trade["filled_amount_usdt"] = filled_amount_usdt
+                                except Exception as e:
+                                    logger.error(f"Error fetching trades for filled_amount_usdt: {str(e)}")
                         if trade["status"] == "Open":
+                            # Refresh filled_amount_usdt from Binance
+                            try:
+                                if symbol and trade.get("binance_order_id"):
+                                    trades = binance_client.get_my_trades(symbol=symbol)
+                                    order_trades = [t for t in trades if t['orderId'] == trade["binance_order_id"]]
+                                    filled_amount_usdt = sum(float(t['qty']) * float(t['price']) for t in order_trades)
+                                    trade["filled_amount_usdt"] = filled_amount_usdt
+                            except Exception as e:
+                                logger.error(f"Error refreshing filled_amount_usdt for open trade: {str(e)}")
                             metrics = calculate_trade_metrics(trade, current_price)
                             trade.update(metrics)
                             symbol = SYMBOL_MAPPING.get(trade["coin"].lower())
@@ -698,8 +751,12 @@ async def lifespan(app: FastAPI):
                                 # Always log the required price drop and margin info
                                 margin_value = trade.get("take_profit", TURNING_POINT_MARGIN)
                                 margin_type = trade.get("take_profit_type", "dollar")
+                                # Use filled_amount_usdt if available, else amount_usdt
+                                base_amount = trade.get("filled_amount_usdt")
+                                if base_amount is None or base_amount == 0:
+                                    base_amount = trade.get("amount_usdt", 0)
                                 if margin_type == "percentage":
-                                    required_profit = (margin_value / 100) * trade["amount_usdt"]
+                                    required_profit = (margin_value / 100) * base_amount
                                     required_price_drop = required_profit / trade['quantity']
                                 else:
                                     required_profit = margin_value * trade['quantity']
@@ -713,8 +770,12 @@ async def lifespan(app: FastAPI):
                                     price_drop_from_peak = peak_price - closes[-1]
                                     margin_type = trade.get("take_profit_type", "dollar")
                                     margin_value = trade.get("take_profit", TURNING_POINT_MARGIN)
+                                    # Use filled_amount_usdt if available, else amount_usdt
+                                    base_amount = trade.get("filled_amount_usdt")
+                                    if base_amount is None or base_amount == 0:
+                                        base_amount = trade.get("amount_usdt", 0)
                                     if margin_type == "percentage":
-                                        required_profit = (margin_value / 100) * trade["amount_usdt"]
+                                        required_profit = (margin_value / 100) * base_amount
                                         required_price_drop = required_profit / trade['quantity']
                                     else:
                                         required_profit = margin_value * trade['quantity']
@@ -738,6 +799,7 @@ async def lifespan(app: FastAPI):
                                                 "time": peak_time_iso,
                                                 "price": peak_price
                                             })
+                                            save_orange_points()
                                 elif stop_loss_hit:
                                     should_sell = True
                                     sell_reason = "Stop Loss"
@@ -797,8 +859,12 @@ async def lifespan(app: FastAPI):
                                 # Calculate required price increase based on margin (always in USDT)
                                 margin_value = trade.get("take_profit", TURNING_POINT_MARGIN)
                                 margin_type = trade.get("take_profit_type", "dollar")
+                                # Use filled_amount_usdt if available, else amount_usdt
+                                base_amount = trade.get("filled_amount_usdt")
+                                if base_amount is None or base_amount == 0:
+                                    base_amount = trade.get("amount_usdt", 0)
                                 if margin_type == "percentage":
-                                    required_profit = (margin_value / 100) * trade["amount_usdt"]
+                                    required_profit = (margin_value / 100) * base_amount
                                     required_price_increase = required_profit / trade['quantity']
                                 else:
                                     required_profit = margin_value * trade['quantity']
@@ -829,7 +895,7 @@ async def lifespan(app: FastAPI):
                                     trade["entry_price"] = float(order['fills'][0]['price'])
                                     trade["current_price"] = float(order['fills'][0]['price'])
                                     trade["fees"] = sum(float(fill['commission']) for fill in order['fills'])
-                                    trade["entry_time"] = format_datetime(datetime.now().isoformat())
+                                    trade["entry_time"] = format_datetime(datetime.utcnow().isoformat())
                                     trade["auto_buy_iteration"] = trade["auto_buy_iteration"] + 1
                                     save_trades()
                                     await broadcast_trade_update(trade)
@@ -867,16 +933,19 @@ async def websocket_endpoint(websocket: WebSocket):
                     "id": trade.get("id"),
                     "coin": trade.get("coin"),
                     "amount_usdt": trade.get("amount_usdt", trade.get("amount", 0.0)),
+                    "filled_amount_usdt": trade.get("filled_amount_usdt", trade.get("amount_usdt", 0.0)),
                     "entry_price": trade.get("entry_price", 0.0),
                     "current_price": trade.get("current_price", 0.0),
                     "status": trade.get("status"),
                     "profit_loss": trade.get("profit_loss", 0.0),
-                    "fees": trade.get("fees", 0.0),
+                    "fees": trade.get("buy_fee", trade.get("fees", 0.0)),
                     "roi": trade.get("roi", 0.0),
                     "take_profit": trade.get("take_profit", TAKE_PROFIT_PERCENTAGE),
-                    "take_profit_type": trade.get("take_profit_type", "percentage"),
-                    "stop_loss": trade.get("stop_loss"),
-                    "entry_time": format_datetime(trade.get("entry_time")) if trade.get("entry_time") else "N/A"
+                    "take_profit_type": trade.get("take_profit_type", "dollar"),
+                    "stop_loss": trade.get("stop_loss"),  # Just pass the value as is
+                    "entry_time": format_datetime(trade.get("entry_time")) if trade.get("entry_time") else "N/A",
+                    "binance_order_id": trade.get("binance_order_id", ""),
+                    "sell_binance_order_id": trade.get("sell_binance_order_id", "")
                 }
                 trades_data.append(trade_data)
             await websocket.send_json({
@@ -919,16 +988,19 @@ async def home(request: Request, user: str = Depends(require_auth)):
                 "id": trade.get("id"),
                 "coin": trade.get("coin"),
                 "amount_usdt": trade.get("amount_usdt", trade.get("amount", 0.0)),
+                "filled_amount_usdt": trade.get("filled_amount_usdt", trade.get("amount_usdt", 0.0)),
                 "entry_price": trade.get("entry_price", 0.0),
                 "current_price": current_price,
                 "status": trade.get("status"),
                 "profit_loss": metrics.get("profit_loss", 0.0),
-                "fees": metrics.get("fees", 0.0),
+                "fees": round(metrics.get("fees", 0.0), 3),
                 "roi": metrics.get("roi", 0.0),
                 "take_profit": trade.get("take_profit", TAKE_PROFIT_PERCENTAGE),
                 "take_profit_type": trade.get("take_profit_type", "percentage"),
                 "stop_loss": trade.get("stop_loss"),
-                "entry_time": format_datetime(trade.get("entry_time")) if trade.get("entry_time") else "N/A"
+                "entry_time": format_datetime(trade.get("entry_time")) if trade.get("entry_time") else "N/A",
+                "binance_order_id": trade.get("binance_order_id", ""),
+                "sell_binance_order_id": trade.get("sell_binance_order_id", "")
             }
             unique_trades[key] = processed_trade
     processed_trades = list(unique_trades.values())
@@ -949,16 +1021,23 @@ async def home(request: Request, user: str = Depends(require_auth)):
                 "id": trade.get("id"),
                 "coin": trade.get("coin"),
                 "amount_usdt": trade.get("amount_usdt", trade.get("amount", 0.0)),
+                "filled_amount_usdt": trade.get("filled_amount_usdt", trade.get("amount_usdt", 0.0)),
                 "entry_price": trade.get("entry_price", 0.0),
                 "exit_price": trade.get("exit_price", None),
                 "profit_loss": trade.get("profit_loss", 0.0),
                 "fees": trade.get("fees", 0.0),
+                "buy_fee": trade.get("buy_fee", 0.0),
+                "sell_fee": trade.get("sell_fee", 0.0),
                 "status": trade.get("status"),
                 "entry_time": format_datetime(trade.get("entry_time")) if trade.get("entry_time") else "N/A",
                 "exit_time": format_datetime(trade.get("exit_time")) if trade.get("exit_time") else "N/A",
                 "roi": trade.get("roi", 0.0),
                 "take_profit": trade.get("take_profit", TAKE_PROFIT_PERCENTAGE),
-                "stop_loss": trade.get("stop_loss")
+                "stop_loss": trade.get("stop_loss"),
+                "binance_order_id": trade.get("binance_order_id", ""),
+                "sell_binance_order_id": trade.get("sell_binance_order_id", ""),
+                "duration": calculate_duration(trade.get("entry_time"), trade.get("exit_time")),
+                "sell_amount_usdt": trade.get("sell_amount_usdt")
             }
             unique_history[key] = processed_history
     processed_history = list(unique_history.values())
@@ -1084,6 +1163,19 @@ async def _create_trade_logic(trade_request: TradeRequest):
                 )
                 entry_price = float(order['fills'][0]['price'])
                 status = "Open"
+                binance_order_id = order['orderId']
+                logger.info(f"Buy order ID: {binance_order_id}")
+                # Calculate actual filled amount in USDT
+                try:
+                    trades = binance_client.get_my_trades(symbol=symbol)
+                    order_trades = [t for t in trades if t['orderId'] == order['orderId']]
+                    filled_amount_usdt = sum(float(t['qty']) * float(t['price']) for t in order_trades)
+                except Exception as e:
+                    logger.error(f"Error fetching trades for filled_amount_usdt (market order): {str(e)}")
+                    if 'fills' in order and order['fills']:
+                        filled_amount_usdt = sum(float(fill['qty']) * float(fill['price']) for fill in order['fills'])
+                    else:
+                        filled_amount_usdt = amount_usdt  # fallback
             else:  # limit order
                 if not trade_request.limit_price or trade_request.limit_price <= 0:
                     raise HTTPException(status_code=400, detail="Limit price must be greater than 0 for limit orders")
@@ -1144,7 +1236,7 @@ async def _create_trade_logic(trade_request: TradeRequest):
             raise HTTPException(status_code=400, detail=f"Error creating order: {str(e)}")
         
         # Calculate initial fees (only for market orders)
-        entry_fee = round(amount_usdt * TRADING_FEE, 2) if status == "Open" else 0.0
+        entry_fee = round(amount_usdt * TRADING_FEE, 3) if status == "Open" else 0.0
 
         # Take profit logic disabled - no take profit price calculation
         take_profit_price = None
@@ -1154,17 +1246,19 @@ async def _create_trade_logic(trade_request: TradeRequest):
             "id": str(uuid.uuid4()),
             "coin": trade_request.coin,
             "amount_usdt": amount_usdt,
+            "filled_amount_usdt": filled_amount_usdt,
             "quantity": float(formatted_quantity),
             "order_type": trade_request.order_type,
             "entry_price": entry_price,
             "current_price": current_price,
             "status": status,
             "limit_price": float(trade_request.limit_price) if trade_request.order_type == "limit" else None,
-            "entry_time": format_datetime(datetime.now().isoformat()),
+            "entry_time": format_datetime(datetime.utcnow().isoformat()),
             "profit_loss": 0.0,
             "fees": entry_fee,
+            "buy_fee": entry_fee,
             "roi": 0.0,
-            "binance_order_id": order['orderId'],  # Store Binance order ID
+            "binance_order_id": order['orderId'],
             "take_profit": trade_request.take_profit if trade_request.take_profit is not None else DEFAULT_MARGIN,
             "take_profit_type": trade_request.take_profit_type if trade_request.take_profit_type else "dollar",
             "stop_loss": trade_request.stop_loss,
@@ -1220,7 +1314,9 @@ def calculate_trade_metrics(trade, current_price):
                 "current_price": safe_current_price,
                 "profit_loss": 0.0,
                 "fees": 0.0,
-                "roi": 0.0
+                "roi": 0.0,
+                "buy_fee": 0.0,
+                "sell_fee": 0.0
             }
 
         # Convert all values to float and ensure they are positive
@@ -1253,8 +1349,10 @@ def calculate_trade_metrics(trade, current_price):
         return {
             "current_price": safe_current_price,
             "profit_loss": round(net_profit_loss, 2),
-            "fees": round(total_fees, 2),
-            "roi": round(roi, 2)
+            "fees": round(total_fees, 3),
+            "roi": round(roi, 2),
+            "buy_fee": round(entry_fee, 3),
+            "sell_fee": round(exit_fee, 3)
         }
 
     except (ValueError, TypeError) as e:
@@ -1265,7 +1363,9 @@ def calculate_trade_metrics(trade, current_price):
             "current_price": safe_current_price,
             "profit_loss": 0.0,
             "fees": 0.0,
-            "roi": 0.0
+            "roi": 0.0,
+            "buy_fee": 0.0,
+            "sell_fee": 0.0
         }
 
 @app.post("/close-trade/{trade_id}")
@@ -1319,6 +1419,7 @@ async def close_trade(trade_id: str, user: str = Depends(require_auth)):
             if not coin_balance or coin_balance <= 0:
                 raise HTTPException(status_code=400, detail=f"No {base_asset} balance available")
 
+
             # Use the trade's quantity directly
             quantity_to_sell = float(trade["quantity"])
             
@@ -1335,6 +1436,7 @@ async def close_trade(trade_id: str, user: str = Depends(require_auth)):
                 order_type='MARKET',
                 quantity=float(formatted_quantity)
             )
+            trade['sell_binance_order_id'] = order.get('orderId', '')
             
             if not order or 'fills' not in order or not order['fills']:
                 raise HTTPException(status_code=400, detail="Failed to execute sell order")
@@ -1347,10 +1449,10 @@ async def close_trade(trade_id: str, user: str = Depends(require_auth)):
             # Update trade data
             trade["current_price"] = exit_price
             trade["status"] = "Closed"
-            trade["exit_time"] = format_datetime(datetime.now().isoformat())
+            trade["exit_time"] = format_datetime(datetime.utcnow().isoformat())
             trade["exit_price"] = exit_price
             trade["exit_quantity"] = total_filled_quantity
-            
+            trade["sell_amount_usdt"] = total_cost
             # Calculate final metrics
             metrics = calculate_trade_metrics(trade, exit_price)
             trade.update(metrics)
@@ -1360,20 +1462,25 @@ async def close_trade(trade_id: str, user: str = Depends(require_auth)):
             
             # Remove from active trades
             active_trades.remove(trade)
-
+            
             # --- AUTO-BUY LOOP: Create new pending trade if enabled ---
             if trade.get('auto_buy_loop', False):
+                previous_amount = trade.get("filled_amount_usdt", trade.get("amount_usdt", 0))
+                previous_profit_loss = trade.get("profit_loss", 0)
+                next_amount = previous_amount + previous_profit_loss
+                if next_amount <= 0:
+                    next_amount = previous_amount  # Prevent negative or zero entry
                 new_trade = {
                     "id": str(uuid.uuid4()),
                     "coin": trade["coin"],
-                    "amount_usdt": trade["amount_usdt"],
-                    "quantity": trade["amount_usdt"] / exit_price,
+                    "amount_usdt": next_amount,
+                    "quantity": next_amount / exit_price if exit_price else 0,
                     "order_type": trade["order_type"],
                     "entry_price": None,
                     "current_price": exit_price,
                     "status": "Pending",
                     "limit_price": None,
-                    "entry_time": format_datetime(datetime.now().isoformat()),
+                    "entry_time": format_datetime(datetime.utcnow().isoformat()),
                     "profit_loss": 0.0,
                     "fees": 0.0,
                     "roi": 0.0,
@@ -1382,7 +1489,7 @@ async def close_trade(trade_id: str, user: str = Depends(require_auth)):
                     "take_profit_type": trade.get("take_profit_type", "dollar"),
                     "stop_loss": trade.get("stop_loss"),
                     "auto_buy_loop": True,
-                    "auto_buy_iteration": 1
+                    "auto_buy_iteration": trade.get("auto_buy_iteration", 1) + 1
                 }
                 active_trades.append(new_trade)
                 save_trades()
@@ -1477,6 +1584,14 @@ async def get_active_trades(user: str = Depends(require_auth)):
     for trade in active_trades:
         if trade['id'] not in seen_ids:
             seen_ids.add(trade['id'])
+            # Ensure buy_fee is present and correct
+            trade = dict(trade)  # Copy to avoid mutating global
+            if 'buy_fee' not in trade or trade['buy_fee'] is None:
+                trade['buy_fee'] = round(trade.get('amount_usdt', 0.0) * TRADING_FEE, 3)
+            # For active trades, set 'fees' to 'buy_fee' so frontend always shows only the buy fee
+            trade['fees'] = trade['buy_fee']
+            # Add sell_amount_usdt if present
+            trade['sell_amount_usdt'] = trade.get('sell_amount_usdt')
             unique_trades.append(trade)
     return unique_trades
 
@@ -1642,7 +1757,7 @@ def print_rsi_status(symbol: str, rsi: float, is_oversold: bool = False):
 async def get_price_history(symbol: str = 'BTCUSDT', range: int = 1):
     """Return OHLCV price history for the given symbol and range in days (1, 7, 30). Also returns orange points for high turn peaks where profit condition is not met."""
     try:
-        end_time = datetime.now()
+        end_time = datetime.utcnow()
         start_time = end_time - timedelta(days=range)
         start_str = start_time.strftime('%Y-%m-%d')
         end_str = end_time.strftime('%Y-%m-%d')
@@ -1713,7 +1828,7 @@ async def auto_buy(trade_request: TradeRequest, user: str = Depends(require_auth
             "current_price": current_price,
             "status": "Pending",
             "limit_price": None,
-            "entry_time": format_datetime(datetime.now().isoformat()),
+            "entry_time": format_datetime(datetime.utcnow().isoformat()),
             "profit_loss": 0.0,
             "fees": 0.0,
             "roi": 0.0,
@@ -1761,7 +1876,7 @@ def get_trading_log():
 async def get_chart_data(days: int = 1, symbol: str = 'BTCUSDT'):
     """Return OHLCV price history for the given symbol and number of days."""
     try:
-        end_time = datetime.now()
+        end_time = datetime.utcnow()
         start_time = end_time - timedelta(days=days)
         start_str = start_time.strftime('%Y-%m-%d')
         end_str = end_time.strftime('%Y-%m-%d')
@@ -1783,6 +1898,23 @@ async def get_chart_data(days: int = 1, symbol: str = 'BTCUSDT'):
     except Exception as e:
         logger.error(f"Error fetching chart data: {str(e)}")
         return JSONResponse({"error": str(e)}, status_code=500)
+
+def calculate_duration(entry_time, exit_time):
+    if not entry_time or not exit_time or entry_time == "N/A" or exit_time == "N/A":
+        return "N/A"
+    try:
+        entry_dt = datetime.fromisoformat(entry_time)
+        exit_dt = datetime.fromisoformat(exit_time)
+        duration = exit_dt - entry_dt
+        days = duration.days
+        hours, remainder = divmod(duration.seconds, 3600)
+        minutes, _ = divmod(remainder, 60)
+        if days > 0:
+            return f"{days}d {hours}h {minutes}m"
+        else:
+            return f"{hours}h {minutes}m"
+    except Exception:
+        return "N/A"
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Run the FastAPI application')
