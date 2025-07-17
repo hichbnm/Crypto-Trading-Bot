@@ -7,7 +7,7 @@ import requests
 from typing import Optional, List, Dict, Set, Tuple
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import uvicorn
 from contextlib import asynccontextmanager
 import json
@@ -225,8 +225,12 @@ async def validate_order_parameters(symbol: str, quantity: float, price: float =
 # Helper function to format datetime
 def format_datetime(iso_timestamp: str) -> str:
     try:
-        dt_object = datetime.fromisoformat(iso_timestamp)
-        return dt_object.strftime("%Y-%m-%d %H:%M:%S")
+        # Accept both with and without 'Z'
+        if iso_timestamp.endswith('Z'):
+            dt_object = datetime.fromisoformat(iso_timestamp.replace('Z', '+00:00'))
+        else:
+            dt_object = datetime.fromisoformat(iso_timestamp)
+        return dt_object.strftime("%Y-%m-%d %H:%M:%S UTC")
     except ValueError:
         return iso_timestamp # Return original if format is incorrect
 
@@ -444,16 +448,23 @@ async def execute_binance_order(symbol: str, side: str, order_type: str, quantit
             min_qty = float(lot_size_filter['minQty'])
             precision = len(str(step_size).rstrip('0').split('.')[-1])
             
-            # Round down to the nearest valid step size
+            # Round DOWN to the nearest valid step size
             quantity = math.floor(quantity / step_size) * step_size
             formatted_quantity = format(quantity, f'.{precision}f')
             logger.info(f"Formatted quantity: {formatted_quantity} {symbol.replace('USDT', '')}")
             
-            # Validate minimum quantity
+            # Calculate actual amount that will be used
+            actual_amount = float(formatted_quantity) * current_price
             if float(formatted_quantity) < min_qty:
                 raise HTTPException(
                     status_code=400,
                     detail=f"Calculated quantity {formatted_quantity} is below minimum {min_qty} for {symbol}"
+                )
+            # Warn if actual required amount is less than a reasonable threshold (optional)
+            if actual_amount < 0.01:  # You can adjust this threshold as needed
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"After rounding, the order value is too small: {actual_amount:.2f} USDT. Please enter a higher amount."
                 )
         except Exception as e:
             logger.error(f"Error formatting quantity: {str(e)}")
@@ -793,7 +804,7 @@ async def lifespan(app: FastAPI):
                                         # Record orange point for this symbol
                                         symbol_orange_points = orange_points_by_symbol.setdefault(symbol, [])
                                         peak_time = klines[- (TURN_POINT_WINDOW // 2) - 1][0] // 1000  # timestamp in seconds
-                                        peak_time_iso = datetime.fromtimestamp(peak_time).isoformat()
+                                        peak_time_iso = datetime.fromtimestamp(peak_time, tz=timezone.utc).isoformat().replace('+00:00', 'Z')
                                         if not any(pt['time'] == peak_time_iso for pt in symbol_orange_points):
                                             symbol_orange_points.append({
                                                 "time": peak_time_iso,
@@ -1118,27 +1129,29 @@ async def _create_trade_logic(trade_request: TradeRequest):
             min_qty = float(lot_size_filter['minQty'])
             precision = len(str(step_size).rstrip('0').split('.')[-1])
             
-            # Round up to the nearest valid step size
-            quantity = math.ceil(quantity / step_size) * step_size
+            # Round DOWN to the nearest valid step size
+            quantity = math.floor(quantity / step_size) * step_size
             formatted_quantity = format(quantity, f'.{precision}f')
             logger.info(f"Formatted quantity: {formatted_quantity} {symbol.replace('USDT', '')}")
             
             # Calculate actual amount that will be used
             actual_amount = float(formatted_quantity) * current_price
-            if abs(actual_amount - amount_usdt) > 1.0:  # If difference is more than 1 USDT
-                logger.warning(f"Amount adjustment: Requested {amount_usdt} USDT, will use {actual_amount:.2f} USDT")
-            
-            # Validate minimum quantity
             if float(formatted_quantity) < min_qty:
                 raise HTTPException(
                     status_code=400,
                     detail=f"Calculated quantity {formatted_quantity} is below minimum {min_qty} for {symbol}"
                 )
+            # Warn if actual required amount is less than a reasonable threshold (optional)
+            if actual_amount < 0.01:  # You can adjust this threshold as needed
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"After rounding, the order value is too small: {actual_amount:.2f} USDT. Please enter a higher amount."
+                )
         except Exception as e:
             logger.error(f"Error formatting quantity: {str(e)}")
             raise HTTPException(status_code=400, detail=f"Error formatting quantity: {str(e)}")
         
-        # Check if we have enough USDT balance
+        # Check if we have enough USDT balance (already checked above, but keep for logic consistency)
         try:
             usdt_balance = await get_binance_balance('USDT')
             logger.info(f"Current USDT balance: {usdt_balance}")
@@ -1253,7 +1266,7 @@ async def _create_trade_logic(trade_request: TradeRequest):
             "current_price": current_price,
             "status": status,
             "limit_price": float(trade_request.limit_price) if trade_request.order_type == "limit" else None,
-            "entry_time": format_datetime(datetime.utcnow().isoformat()),
+            "entry_time": utc_iso_now(),
             "profit_loss": 0.0,
             "fees": entry_fee,
             "buy_fee": entry_fee,
@@ -1449,7 +1462,7 @@ async def close_trade(trade_id: str, user: str = Depends(require_auth)):
             # Update trade data
             trade["current_price"] = exit_price
             trade["status"] = "Closed"
-            trade["exit_time"] = format_datetime(datetime.utcnow().isoformat())
+            trade["exit_time"] = utc_iso_now()
             trade["exit_price"] = exit_price
             trade["exit_quantity"] = total_filled_quantity
             trade["sell_amount_usdt"] = total_cost
@@ -1480,7 +1493,7 @@ async def close_trade(trade_id: str, user: str = Depends(require_auth)):
                     "current_price": exit_price,
                     "status": "Pending",
                     "limit_price": None,
-                    "entry_time": format_datetime(datetime.utcnow().isoformat()),
+                    "entry_time": utc_iso_now(),
                     "profit_loss": 0.0,
                     "fees": 0.0,
                     "roi": 0.0,
@@ -1757,11 +1770,11 @@ def print_rsi_status(symbol: str, rsi: float, is_oversold: bool = False):
 async def get_price_history(symbol: str = 'BTCUSDT', range: int = 1):
     """Return OHLCV price history for the given symbol and range in days (1, 7, 30). Also returns orange points for high turn peaks where profit condition is not met."""
     try:
-        end_time = datetime.utcnow()
-        start_time = end_time - timedelta(days=range)
-        start_str = start_time.strftime('%Y-%m-%d')
-        end_str = end_time.strftime('%Y-%m-%d')
-        klines = binance_client.get_historical_klines(symbol, Client.KLINE_INTERVAL_5MINUTE, start_str, end_str)
+        klines = binance_client.get_historical_klines(
+            symbol,
+            Client.KLINE_INTERVAL_5MINUTE,
+            f"{range} day ago UTC"
+        )
         times = [datetime.fromtimestamp(k[0] / 1000).isoformat() for k in klines]
         opens = [float(k[1]) for k in klines]
         highs = [float(k[2]) for k in klines]
@@ -1828,7 +1841,7 @@ async def auto_buy(trade_request: TradeRequest, user: str = Depends(require_auth
             "current_price": current_price,
             "status": "Pending",
             "limit_price": None,
-            "entry_time": format_datetime(datetime.utcnow().isoformat()),
+            "entry_time": utc_iso_now(),
             "profit_loss": 0.0,
             "fees": 0.0,
             "roi": 0.0,
@@ -1874,13 +1887,14 @@ def get_trading_log():
 
 @app.get("/api/chart-data")
 async def get_chart_data(days: int = 1, symbol: str = 'BTCUSDT'):
-    """Return OHLCV price history for the given symbol and number of days."""
+    """Return OHLCV price history for the given symbol and number of days, always including the latest candles."""
     try:
-        end_time = datetime.utcnow()
-        start_time = end_time - timedelta(days=days)
-        start_str = start_time.strftime('%Y-%m-%d')
-        end_str = end_time.strftime('%Y-%m-%d')
-        klines = binance_client.get_historical_klines(symbol, Client.KLINE_INTERVAL_5MINUTE, start_str, end_str)
+        # Use Binance's relative time string to always get up-to-date candles
+        klines = binance_client.get_historical_klines(
+            symbol,
+            Client.KLINE_INTERVAL_5MINUTE,
+            f"{days} day ago UTC"
+        )
         times = [datetime.fromtimestamp(k[0] / 1000).isoformat() for k in klines]
         opens = [float(k[1]) for k in klines]
         highs = [float(k[2]) for k in klines]
@@ -1915,6 +1929,10 @@ def calculate_duration(entry_time, exit_time):
             return f"{hours}h {minutes}m"
     except Exception:
         return "N/A"
+
+def utc_iso_now():
+    """Return the current UTC time as an ISO 8601 string with 'Z' suffix."""
+    return datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Run the FastAPI application')
