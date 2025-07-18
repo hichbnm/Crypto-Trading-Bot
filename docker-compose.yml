@@ -3,7 +3,7 @@ services:
     build: .
     container_name: trading-bot-version-2
     ports:
-      - "10000:9000"
+      - "80:9000"
     env_file:
       - .env
     volumes:

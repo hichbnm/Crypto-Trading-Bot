@@ -643,6 +643,52 @@
             color: var(--white);
             border-color: var(--primary-color);
         }
+
+        #logic-log-area {
+            background: var(--light-bg);
+            color: var(--text-color);
+            padding: 1em 1.5em;
+            border-radius: 10px;
+            margin-bottom: 1.5rem;
+            max-height: 200px;
+            overflow-y: auto;
+            font-size: 1rem;
+            border: 1px solid var(--border-color);
+            box-shadow: 0 2px 8px rgba(44, 62, 80, 0.07);
+            transition: max-height 0.4s, opacity 0.4s;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            line-height: 1.6;
+        }
+        #logic-log-area .log-line {
+            padding: 0.25em 0.5em;
+            border-radius: 4px;
+            margin-bottom: 2px;
+            background: #f9fafb;
+            color: var(--primary-color); /* Use main dashboard color for highlight */
+            font-size: 0.98em;
+            word-break: break-word;
+        }
+        #logic-log-area .log-line:last-child {
+            margin-bottom: 0;
+        }
+        #logic-log-area .buy-log {
+            color: var(--success-color);
+            font-weight: 600;
+        }
+        #logic-log-area .sell-log {
+            color: var(--danger-color);
+            font-weight: 600;
+        }
+        #logic-log-area .log-tag {
+            margin-right: 0.5em;
+            font-weight: 600;
+        }
+        #logic-log-area .log-tag.buy-log {
+            color: var(--success-color);
+        }
+        #logic-log-area .log-tag.sell-log {
+            color: var(--danger-color);
+        }
     </style>
 </head>
 <body>
@@ -663,10 +709,15 @@
                     </div>
                 </div>
                 <div class="stat-box" id="balance-box">
+                    <span style="margin-left: 1.5em;"></span>
+                    <span class="stat-label">Total Value (USDT):</span>
+                    <span class="stat-value" id="total-account-value">$0.00</span>
                     <span class="stat-label">USDT Balance:</span>
-                    <span class="stat-value" id="account-balance">
-                        <span class="balance-loading"></span>
-                    </span>
+                    <span class="stat-value" id="account-balance"><span class="balance-loading"></span></span>
+                    <span style="margin-left: 1.5em;"></span>
+                    <span class="stat-label">BTC Balance:</span>
+                    <span class="stat-value" id="btc-balance">0.00000000</span>
+
                 </div>
                 <div class="connection-status disconnected" id="connection-status">
                     <span class="status-indicator"></span>
@@ -749,9 +800,13 @@
                         <button type="button" class="chart-range-btn" data-range="30">30 Days</button>
                     </div>
                 </div>
-                <button id="toggleChartBtn" style="margin-bottom: 1rem;">Hide Chart</button>
-                
-                <div id="tradeChart" style="width:100%;height:500px;margin-bottom:2rem;"></div>
+                <div style="margin-bottom: 0.5rem; color: #888; font-size: 0.95rem; text-align: left;">
+                    <strong>Note:</strong> All times are shown in UTC.
+                </div>
+                <div class="chart-section">
+                    <button id="toggleChartBtn" style="margin-bottom: 1rem;">Show Chart</button>
+                    <div id="tradeChart" style="width: 100%; height: 500px;"></div>
+                </div>
 
                 <h2>Active Trades</h2>
                 <table id="tradesTable">
@@ -778,6 +833,8 @@
                     </tbody>
                 </table>
 
+                <button id="toggleLogicLogBtn" style="margin: 1rem 0;">Show Logic Logs</button>
+                <div id="logic-log-area" style="display: none;"></div>
                 <h2>Trade History</h2>
                 <table id="historyTable">
                     <thead>
@@ -805,10 +862,10 @@
                             <tr>
                                 <td>{{ trade.sell_binance_order_id }}</td>
                                 <td>{{ trade.coin }}</td>
-                                <td>${{ "%.2f"|format(trade.amount_usdt) }}</td>
-                                <td>${{ "%.2f"|format(trade.filled_amount_usdt if trade.filled_amount_usdt is defined else trade.amount_usdt) }}</td>
-                                <td>{% if trade.sell_amount_usdt is defined and trade.sell_amount_usdt is not none %}${{ '%.2f'|format(trade.sell_amount_usdt) }}{% else %}N/A{% endif %}</td>
-                                <td>{{ trade.entry_price }}</td>
+                                <td>${{ '{:,.2f}'.format(trade.amount_usdt) }}</td>
+                                <td>${{ '{:,.2f}'.format(trade.filled_amount_usdt if trade.filled_amount_usdt is defined else trade.amount_usdt) }}</td>
+                                <td>{% if trade.sell_amount_usdt is defined and trade.sell_amount_usdt is not none %}${{ '{:,.2f}'.format(trade.sell_amount_usdt) }}{% else %}N/A{% endif %}</td>
+                                <td>{{ '{:,.2f}'.format(trade.entry_price) }}</td>
                                 <td>{% if trade.exit_price is not none %}{{ '{:,.2f}'.format(trade.exit_price) }}{% else %}N/A{% endif %}</td>
                                 <td class="profit-loss {{ 'positive' if trade.profit_loss >= 0 else 'negative' }}">
                                     ${{ "%.2f"|format(trade.profit_loss) }}
@@ -862,7 +919,11 @@
                     </td>
                     <td>${trade.coin}</td>
                     <td>${parseFloat(trade.amount_usdt).toFixed(2)} USDT</td>
-                    <td>${typeof trade.filled_amount_usdt !== 'undefined' ? parseFloat(trade.filled_amount_usdt).toFixed(2) : parseFloat(trade.amount_usdt).toFixed(2)} USDT</td>
+                    <td>
+                        ${typeof trade.filled_amount_usdt !== 'undefined' 
+                            ? Number(trade.filled_amount_usdt).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) 
+                            : Number(trade.amount_usdt).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2})} USDT
+                    </td>
                     <td>${trade.sell_amount_usdt != null ? parseFloat(trade.sell_amount_usdt).toFixed(2) : 'N/A'} USDT</td>
                     <td>${parseFloat(trade.entry_price).toFixed(2)}</td>
                     <td class="current-price">${trade.current_price != null ? Number(trade.current_price).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : 'N/A'}</td>

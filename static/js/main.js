@@ -1,3 +1,85 @@
+let logicLogs = [];
+
+function updateLogicLogArea() {
+    const area = document.getElementById('logic-log-area');
+    if (area) {
+        // Remove consecutive duplicates
+        let deduped = [];
+        for (let i = 0; i < logicLogs.length; i++) {
+            if (i === 0 || logicLogs[i] !== logicLogs[i - 1]) {
+                deduped.push(logicLogs[i]);
+            }
+        }
+        area.innerHTML = deduped.length
+            ? deduped.map(msg => {
+                let tag = '';
+                let rest = msg;
+                if (msg.startsWith('[BUY LOGIC]')) {
+                    tag = '<span class="log-tag buy-log">[BUY LOGIC]</span>';
+                    rest = msg.replace('[BUY LOGIC]', '');
+                } else if (msg.startsWith('[SELL LOGIC]')) {
+                    tag = '<span class="log-tag sell-log">[SELL LOGIC]</span>';
+                    rest = msg.replace('[SELL LOGIC]', '');
+                }
+                return `<div class="log-line">${tag}${rest}</div>`;
+            }).join('')
+            : '<div style="color:#aaa;">No logs yet.</div>';
+        area.scrollTop = area.scrollHeight;
+    }
+}
+
+async function fetchInitialLogs() {
+    try {
+        const response = await fetch('/logs/trading_bot.log');
+        if (!response.ok) return;
+        const text = await response.text();
+        // Split by lines, filter for [SELL LOGIC] or [BUY LOGIC]
+        const lines = text.trim().split('\n');
+        const filtered = lines.filter(line => line.includes('[SELL LOGIC]') || line.includes('[BUY LOGIC]'));
+        const lastLines = filtered.slice(-50); // Show last 50 filtered logs
+        logicLogs = lastLines;
+        updateLogicLogArea();
+    } catch (e) {
+        // Optionally handle error
+    }
+}
+
+document.addEventListener('DOMContentLoaded', function() {
+    fetchInitialLogs();
+    const toggleLogicLogBtn = document.getElementById('toggleLogicLogBtn');
+    const logicLogArea = document.getElementById('logic-log-area');
+    if (toggleLogicLogBtn && logicLogArea) {
+        toggleLogicLogBtn.addEventListener('click', function() {
+            if (logicLogArea.style.display === 'none' || logicLogArea.style.maxHeight === '0px' || logicLogArea.style.maxHeight === '0') {
+                logicLogArea.style.display = 'block';
+                setTimeout(() => {
+                    logicLogArea.style.maxHeight = '200px';
+                    logicLogArea.style.opacity = 1;
+                }, 10);
+                toggleLogicLogBtn.textContent = 'Hide Logic Logs';
+                updateLogicLogArea();
+            } else {
+                logicLogArea.style.maxHeight = '0';
+                logicLogArea.style.opacity = 0;
+                setTimeout(() => {
+                    logicLogArea.style.display = 'none';
+                }, 400);
+                toggleLogicLogBtn.textContent = 'Show Logic Logs';
+            }
+        });
+        // Initial state
+        logicLogArea.style.maxHeight = '0';
+        logicLogArea.style.opacity = 0;
+        logicLogArea.style.display = 'none';
+    }
+
+    // WebSocket handler for real logs
+    // The connectWebSocket function now handles its own WebSocket connection
+    // This listener is kept to ensure logic_log messages are processed
+    // and the log area is updated.
+    // The actual WebSocket connection is managed by connectWebSocket.
+});
+
 // Account Balance Functions
 async function fetchAccountBalance() {
     try {
@@ -54,8 +136,38 @@ setInterval(fetchAccountBalance, 30000);
 
 // Fetch balance immediately when page loads
 document.addEventListener('DOMContentLoaded', () => {
+    console.log('DOM fully loaded');
     console.log('Page loaded, fetching initial balance...');
     fetchAccountBalance();
+    fetchAccountTotalValue();
+
+    // Main WebSocket for both trade updates and logic logs
+    // The connectWebSocket function now handles its own WebSocket connection
+    // This listener is kept to ensure trade_update and logic_log messages are processed
+    // and the table/log area are updated.
+    // The actual WebSocket connection is managed by connectWebSocket.
+});
+
+async function fetchAccountTotalValue() {
+    try {
+        const response = await fetch('/account-total-value');
+        const data = await response.json();
+        if (data.status === 'success') {
+            const btcElem = document.getElementById('btc-balance');
+            const totalElem = document.getElementById('total-account-value');
+            if (btcElem) btcElem.textContent = parseFloat(data.btc_balance).toFixed(8);
+            if (totalElem) totalElem.textContent = '$' + parseFloat(data.total_value).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+        }
+    } catch (e) {
+        // Optionally handle error
+    }
+}
+
+// Update both balances every 30 seconds
+setInterval(fetchAccountTotalValue, 30000);
+document.addEventListener('DOMContentLoaded', () => {
+    // ... existing code ...
+    fetchAccountTotalValue();
 });
 
 // Global variables
@@ -347,6 +459,7 @@ function connectWebSocket() {
     };
 
     ws.onmessage = function(event) {
+        console.log('[DEBUG] WebSocket message received:', event.data);
         try {
             const data = JSON.parse(event.data);
             if (data.type === 'trade_update' && Array.isArray(data.trades)) {
@@ -376,6 +489,13 @@ function connectWebSocket() {
                 // Update total P/L and counts
                 updateActiveTradesCount();
                 updateTotalPL();
+            } else if (data.type === 'logic_log') {
+                console.log('Received logic log:', data.message);
+                if (data.message.includes('[SELL LOGIC]') || data.message.includes('[BUY LOGIC]')) {
+                    logicLogs.push(data.message);
+                    if (logicLogs.length > 100) logicLogs.shift();
+                    updateLogicLogArea();
+                }
             }
         } catch (error) {
             console.error('Error processing WebSocket message:', error);
@@ -672,7 +792,7 @@ function addTradeToTable(trade) {
         <td class="buy-order-id">${trade.binance_order_id ? trade.binance_order_id : 'N/A'}</td>
         <td class="coin">${trade.coin}</td>
         <td class="amount">$${formatNumber(trade.amount_usdt)}</td>
-        <td class="filled-amount">${trade.status === 'Pending' ? 'N/A' : `$${typeof trade.filled_amount_usdt !== 'undefined' ? parseFloat(trade.filled_amount_usdt).toFixed(2) : parseFloat(trade.amount_usdt).toFixed(2)}`}</td>
+        <td class="filled-amount">${trade.status === 'Pending' ? 'N/A' : `$${typeof trade.filled_amount_usdt !== 'undefined' ? formatNumber(trade.filled_amount_usdt) : formatNumber(trade.amount_usdt)}`}</td>
         <td class="entry-price">${trade.status === "Pending" ? 'N/A' : `$${formatNumber(trade.entry_price)}`}</td>
         <td class="current-price">$${trade.current_price != null ? Number(trade.current_price).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2}) : 'N/A'}</td>
         <td class="profit-loss ${parseFloat(trade.profit_loss || 0) >= 0 ? 'positive' : 'negative'}">
@@ -907,6 +1027,51 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         });
     }
+
+    let logicLogs = [];
+
+    function updateLogicLogArea() {
+        const area = document.getElementById('logic-log-area');
+        if (area) {
+            area.innerHTML = logicLogs.map(msg => `<div>${msg}</div>`).join('');
+            area.scrollTop = area.scrollHeight;
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', function() {
+        // ... existing code ...
+        updateLogicLogArea(); // Show any logs already present on load
+        // Logic Logs Toggle Button
+        const toggleLogicLogBtn = document.getElementById('toggleLogicLogBtn');
+        const logicLogArea = document.getElementById('logic-log-area');
+        console.log('toggleLogicLogBtn:', toggleLogicLogBtn);
+        console.log('logicLogArea:', logicLogArea);
+
+        if (toggleLogicLogBtn && logicLogArea) {
+            toggleLogicLogBtn.addEventListener('click', function() {
+                console.log('Show Logic Logs button clicked!');
+                if (logicLogArea.style.maxHeight === '0px' || logicLogArea.style.maxHeight === '0' || logicLogArea.style.display === 'none') {
+                    logicLogArea.style.display = 'block';
+                    setTimeout(() => {
+                        logicLogArea.style.maxHeight = '200px';
+                        logicLogArea.style.opacity = 1;
+                    }, 10);
+                    toggleLogicLogBtn.textContent = 'Hide Logic Logs';
+                } else {
+                    logicLogArea.style.maxHeight = '0';
+                    logicLogArea.style.opacity = 0;
+                    setTimeout(() => {
+                        logicLogArea.style.display = 'none';
+                    }, 400);
+                    toggleLogicLogBtn.textContent = 'Show Logic Logs';
+                }
+            });
+            // Ensure initial state is hidden
+            logicLogArea.style.maxHeight = '0';
+            logicLogArea.style.opacity = 0;
+            logicLogArea.style.display = 'none';
+        }
+    });
 });
 
 // Add this function after the existing functions

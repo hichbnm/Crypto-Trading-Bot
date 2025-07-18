@@ -33,6 +33,9 @@ from starlette.middleware.sessions import SessionMiddleware
 import numpy as np
 import argparse
 import pandas as pd
+import hmac
+import hashlib
+import requests as pyrequests
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -719,6 +722,7 @@ async def lifespan(app: FastAPI):
                             trade["price_history"] = trade["price_history"][-20:]
                         trade["current_price"] = current_price
                         if trade["status"] == "Pending" and trade["order_type"] == "limit":
+                            symbol = SYMBOL_MAPPING.get(trade["coin"].lower())
                             if current_price <= trade["limit_price"]:
                                 trade["status"] = "Open"
                                 trade["entry_price"] = current_price
@@ -735,6 +739,7 @@ async def lifespan(app: FastAPI):
                         if trade["status"] == "Open":
                             # Refresh filled_amount_usdt from Binance
                             try:
+                                symbol = SYMBOL_MAPPING.get(trade["coin"].lower())
                                 if symbol and trade.get("binance_order_id"):
                                     trades = binance_client.get_my_trades(symbol=symbol)
                                     order_trades = [t for t in trades if t['orderId'] == trade["binance_order_id"]]
@@ -803,7 +808,8 @@ async def lifespan(app: FastAPI):
                                         )
                                         # Record orange point for this symbol
                                         symbol_orange_points = orange_points_by_symbol.setdefault(symbol, [])
-                                        peak_time = klines[- (TURN_POINT_WINDOW // 2) - 1][0] // 1000  # timestamp in seconds
+                                        peak_candle = klines[- (TURN_POINT_WINDOW // 2) - 1]
+                                        peak_time = peak_candle[6] // 1000  # close time in seconds
                                         peak_time_iso = datetime.fromtimestamp(peak_time, tz=timezone.utc).isoformat().replace('+00:00', 'Z')
                                         if not any(pt['time'] == peak_time_iso for pt in symbol_orange_points):
                                             symbol_orange_points.append({
@@ -849,9 +855,13 @@ async def lifespan(app: FastAPI):
                             limit=100
                         )
                         closes = [float(k[4]) for k in klines]
-                        logger.info(f"[BUY LOGIC] Last {TURN_POINT_WINDOW} closes: {closes[-TURN_POINT_WINDOW:]}")
+                        log1 = f"[BUY LOGIC] Last {TURN_POINT_WINDOW} closes: {closes[-TURN_POINT_WINDOW:]}"
+                        logger.info(log1)
+                        await broadcast_logic_log(log1)
                         is_low_turn = is_low_turn_point(closes, TURN_POINT_WINDOW)
-                        logger.info(f"[BUY LOGIC] Checking for low turn point: is_low_turn={is_low_turn}")
+                        log2 = f"[BUY LOGIC] Checking for low turn point: is_low_turn={is_low_turn}"
+                        logger.info(log2)
+                        await broadcast_logic_log(log2)
                         should_buy = False  # Initialize here to avoid unbound variable error
                         # Check if this is the initial buy (auto_buy_iteration == 1) or a subsequent auto-buy
                         is_initial_buy = trade.get("auto_buy_iteration", 1) == 1
@@ -860,7 +870,9 @@ async def lifespan(app: FastAPI):
                         if is_initial_buy:
                             # Initial buy: only low turn point logic (no price rise threshold)
                             if is_low_turn and len(closes) >= TURN_POINT_WINDOW and closes[-1] > closes[-2] and closes[-2] > closes[-3]:
-                                logger.info(f"[BUY LOGIC] Initial buy: Low turn point detected - executing buy order immediately")
+                                log3 = f"[BUY LOGIC] Initial buy: Low turn point detected - executing buy order immediately"
+                                logger.info(log3)
+                                await broadcast_logic_log(log3)
                                 should_buy = True
                         else:
                             # Subsequent auto-buy: low turn point + price rise threshold
@@ -880,18 +892,24 @@ async def lifespan(app: FastAPI):
                                 else:
                                     required_profit = margin_value * trade['quantity']
                                     required_price_increase = margin_value
-                                logger.info(
+                                logger_msg = (
                                     f"[BUY LOGIC] Required price increase for margin: {required_price_increase:.6f} "
                                     f"Turning Point Buy (Price Rise: {price_rise_from_trough:.6f} > Required Profit: ${required_profit:.2f} | Margin Param: {margin_value:.2f}{'%' if margin_type == 'percentage' else '$'})"
                                 )
+                                logger.info(logger_msg)
+                                await broadcast_logic_log(logger_msg)
                                 if price_rise_from_trough > required_price_increase:
                                     should_buy = True
-                                    logger.info(f"[BUY LOGIC] Subsequent buy: Low turn point detected with sufficient price rise - executing buy order")
+                                    log4 = f"[BUY LOGIC] Subsequent buy: Low turn point detected with sufficient price rise - executing buy order"
+                                    logger.info(log4)
+                                    await broadcast_logic_log(log4)
                                 else:
-                                    logger.info(
+                                    log5 = (
                                         f"[BUY LOGIC] Low turn detected and 3 up candles, but price rise/profit condition not met: "
                                         f"price_rise_from_trough={price_rise_from_trough:.2f}, required_price_increase={required_price_increase:.2f}, required_profit={required_profit:.2f}"
-                                     )
+                                    )
+                                    logger.info(log5)
+                                    await broadcast_logic_log(log5)
                             
                         if should_buy:
                                 try:
@@ -1781,8 +1799,20 @@ async def get_price_history(symbol: str = 'BTCUSDT', range: int = 1):
         lows = [float(k[3]) for k in klines]
         closes = [float(k[4]) for k in klines]
         volumes = [float(k[5]) for k in klines]
-        # Get orange points for this symbol in the requested time range
-        orange_points = [pt for pt in orange_points_by_symbol.get(symbol, []) if pt['time'] >= times[0] and pt['time'] <= times[-1]]
+        # Normalize orange point times to match candle times
+        def normalize_time(t):
+            # If candles have 'Z', add 'Z' to orange points; else, remove 'Z'
+            candle_has_z = times[0].endswith('Z')
+            if t.endswith('Z') and not candle_has_z:
+                return t[:-1]
+            elif not t.endswith('Z') and candle_has_z:
+                return t + 'Z'
+            return t
+        orange_points = [
+            {**pt, "time": normalize_time(pt["time"])}
+            for pt in orange_points_by_symbol.get(symbol, [])
+            if normalize_time(pt['time']) >= times[0] and normalize_time(pt['time']) <= times[-1]
+        ]
         return JSONResponse({
             "times": times,
             "opens": opens,
@@ -1933,6 +1963,135 @@ def calculate_duration(entry_time, exit_time):
 def utc_iso_now():
     """Return the current UTC time as an ISO 8601 string with 'Z' suffix."""
     return datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+
+@app.post("/convert-btc-to-usdt")
+async def convert_btc_to_usdt(user: str = Depends(require_auth)):
+    """Convert all BTC in the account to USDT using Binance Convert API."""
+    try:
+        # Get BTC balance
+        btc_balance = await get_binance_balance('BTC')
+        if btc_balance is None or btc_balance <= 0:
+            return {"status": "error", "detail": "No BTC balance to convert."}
+        
+        # Get quote
+        api_key = BINANCE_API_KEY
+        api_secret = BINANCE_API_SECRET
+        base_url = 'https://api.binance.com'
+        endpoint = '/sapi/v1/convert/getQuote'
+        timestamp = int(time.time() * 1000)
+        params = f'fromAsset=BTC&toAsset=USDT&fromAmount={btc_balance}&timestamp={timestamp}'
+        signature = hmac.new(api_secret.encode(), params.encode(), hashlib.sha256).hexdigest()
+        headers = {'X-MBX-APIKEY': api_key}
+        quote_resp = pyrequests.post(
+            base_url + endpoint + '?' + params + f'&signature={signature}',
+            headers=headers
+        )
+        quote_data = quote_resp.json()
+        if 'quoteId' not in quote_data:
+            return {"status": "error", "detail": quote_data.get('msg', 'Failed to get quote.')}
+        quote_id = quote_data['quoteId']
+        # Accept quote
+        endpoint2 = '/sapi/v1/convert/acceptQuote'
+        timestamp2 = int(time.time() * 1000)
+        params2 = f'quoteId={quote_id}&timestamp={timestamp2}'
+        signature2 = hmac.new(api_secret.encode(), params2.encode(), hashlib.sha256).hexdigest()
+        accept_resp = pyrequests.post(
+            base_url + endpoint2 + '?' + params2 + f'&signature={signature2}',
+            headers=headers
+        )
+        accept_data = accept_resp.json()
+        if accept_resp.status_code == 200 and accept_data.get('orderStatus') == 'SUCCESS':
+            return {"status": "success", "detail": "Converted all BTC to USDT."}
+        else:
+            return {"status": "error", "detail": accept_data.get('msg', 'Conversion failed.')}
+    except Exception as e:
+        return {"status": "error", "detail": str(e)}
+
+@app.get("/account-total-value")
+async def get_account_total_value(user: str = Depends(require_auth)):
+    """Get total account value in USDT and BTC balance."""
+    try:
+        account_info = binance_client.get_account()
+        balances = [
+            {
+                "asset": balance["asset"],
+                "free": float(balance["free"]),
+                "locked": float(balance["locked"]),
+                "total": float(balance["free"]) + float(balance["locked"])
+            }
+            for balance in account_info["balances"]
+        ]
+        total_usdt = 0.0
+        btc_balance = 0.0
+        for bal in balances:
+            asset = bal["asset"]
+            total = bal["total"]
+            if asset == "USDT":
+                total_usdt += total
+            elif asset == "BTC":
+                btc_balance = total
+                # Get BTCUSDT price
+                ticker = binance_client.get_symbol_ticker(symbol="BTCUSDT")
+                price = float(ticker["price"])
+                total_usdt += total * price
+            elif total > 0:
+                # Try to get price in USDT
+                symbol = asset + "USDT"
+                try:
+                    ticker = binance_client.get_symbol_ticker(symbol=symbol)
+                    price = float(ticker["price"])
+                    total_usdt += total * price
+                except Exception:
+                    pass  # skip if no direct USDT pair
+        return {"status": "success", "total_value": total_usdt, "btc_balance": btc_balance}
+    except Exception as e:
+        return {"status": "error", "detail": str(e)}
+
+last_broadcasted_log = None
+
+async def broadcast_logic_log(message: str):
+    # Write to log file
+    try:
+        log_path = os.path.join("logs", "trading_bot.log")
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(message + "\n")
+    except Exception as e:
+        logger.error(f"Failed to write logic log to file: {e}")
+    # Existing code to broadcast to WebSocket clients
+    for ws in connected_clients:
+        try:
+            await ws.send_json({"type": "logic_log", "message": message})
+        except Exception:
+            pass
+
+# Example usage in buy/sell logic:
+# await broadcast_logic_log(log_message)
+# Replace logger.info(f"[BUY LOGIC] ...") with both logger.info and broadcast_logic_log
+
+@app.get("/test-logic-log")
+async def test_logic_log():
+    await broadcast_logic_log("[BUY LOGIC] Test message from /test-logic-log endpoint")
+    return {"status": "sent"}
+
+# Patch the logger to broadcast all logs to WebSocket clients
+class WebSocketBroadcastHandler(logging.Handler):
+    def emit(self, record):
+        log_entry = self.format(record)
+        # Schedule the broadcast in the event loop
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                asyncio.ensure_future(broadcast_logic_log(log_entry))
+        except Exception:
+            pass
+
+# Add the handler to the root logger
+ws_handler = WebSocketBroadcastHandler()
+ws_handler.setLevel(logging.INFO)
+ws_handler.setFormatter(logging.Formatter('%(message)s'))
+logging.getLogger().addHandler(ws_handler)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Run the FastAPI application')
