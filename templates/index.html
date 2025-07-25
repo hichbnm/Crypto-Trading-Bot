@@ -2,7 +2,8 @@
 <html>
 <head>
     <title>Crypto Trading Bot</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='/css/style.css') }}">
+    <link rel="stylesheet" href="/static/css/style.css">
+
     <style>
         :root {
             --primary-color: #2c3e50;
@@ -890,8 +891,8 @@
         </div>
     </main>
 
-    <script src="{{ url_for('static', path='/js/main.js') }}"></script>
-    <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+    <script src="/static/js/main.js"></script>
+    <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
     <script>
         // Add this at the beginning of your script section
         const activeTradesMap = new Map();
@@ -996,7 +997,8 @@
         document.addEventListener('DOMContentLoaded', function() {
             // Do NOT call updateActiveTradesTable here!
             // Only update via WebSocket
-            const ws = new WebSocket(`ws://${window.location.host}/ws`);
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
             ws.onmessage = function(event) {
                 const data = JSON.parse(event.data);
                 if (data.type === 'trade_update') {

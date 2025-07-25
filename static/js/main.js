@@ -826,7 +826,7 @@ function closeTrade(tradeId) {
         }
     }
 
-    fetch(`/close-trade/${tradeId}`, {
+    fetch(`/close-trade/${tradeId}?manual=true`, {
         method: 'POST'
     })
     .then(response => response.json())

@@ -15,10 +15,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Expose the port FastAPI will run on
-EXPOSE 10000
+EXPOSE 80
 
 # Set environment variables (if needed, .env will be used by python-dotenv)
 ENV PYTHONUNBUFFERED=1
 
 # Start the app
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "9000", "--reload"]
+CMD ["python", "main.py"]

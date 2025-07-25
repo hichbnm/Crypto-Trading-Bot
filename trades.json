@@ -1,27 +1,5 @@
 {
-  "active_trades": [
-    {
-      "id": "20415c0f-f6c3-4deb-8a35-292ebf104ef5",
-      "coin": "bitcoin",
-      "amount_usdt": 5.8836,
-      "quantity": 4.991990975115644e-05,
-      "order_type": "market",
-      "entry_price": null,
-      "current_price": 117860.78999999998,
-      "status": "Pending",
-      "limit_price": null,
-      "entry_time": "2025-07-18T17:39:59.810040Z",
-      "profit_loss": 0.0,
-      "fees": 0.0,
-      "roi": 0.0,
-      "binance_order_id": null,
-      "take_profit": 0.25,
-      "take_profit_type": "percentage",
-      "stop_loss": null,
-      "auto_buy_loop": true,
-      "auto_buy_iteration": 3
-    }
-  ],
+  "active_trades": [],
   "trade_history": [
     {
       "id": "d0a39963-762b-4059-b08a-669803c43b31",
@@ -210,6 +188,35 @@
       "exit_price": 117860.78999999998,
       "exit_quantity": 5e-05,
       "sell_amount_usdt": 5.8930394999999995
+    },
+    {
+      "id": "c4cebd26-7b21-4a18-97f7-610329214c9d",
+      "coin": "bitcoin",
+      "amount_usdt": 7.0,
+      "filled_amount_usdt": 6.9370998,
+      "quantity": 6e-05,
+      "order_type": "market",
+      "entry_price": 115618.33,
+      "current_price": 115606.76000000001,
+      "status": "Closed",
+      "limit_price": null,
+      "entry_time": "2025-07-25T16:38:01.079864Z",
+      "profit_loss": -0.01,
+      "fees": 0.014,
+      "buy_fee": 0.007,
+      "roi": -0.21,
+      "binance_order_id": 46540263738,
+      "take_profit": 0.25,
+      "take_profit_type": "percentage",
+      "stop_loss": null,
+      "auto_buy_loop": true,
+      "auto_buy_iteration": 2,
+      "sell_binance_order_id": 46540267589,
+      "exit_time": "2025-07-25T16:38:08.863378Z",
+      "exit_price": 115606.76000000001,
+      "exit_quantity": 5e-05,
+      "sell_amount_usdt": 5.780338,
+      "sell_fee": 0.007
     }
   ]
 }

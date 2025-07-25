@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Form, HTTPException, WebSocket, Request, Depends, Response
+from fastapi import FastAPI, Form, HTTPException, WebSocket, Request, Depends, Response, Query
 from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
@@ -1400,7 +1400,7 @@ def calculate_trade_metrics(trade, current_price):
         }
 
 @app.post("/close-trade/{trade_id}")
-async def close_trade(trade_id: str, user: str = Depends(require_auth)):
+async def close_trade(trade_id: str, manual: bool = Query(False), user: str = Depends(require_auth)):
     """Close a trade with real Binance sell order."""
     try:
         # Find the trade
@@ -1495,7 +1495,7 @@ async def close_trade(trade_id: str, user: str = Depends(require_auth)):
             active_trades.remove(trade)
             
             # --- AUTO-BUY LOOP: Create new pending trade if enabled ---
-            if trade.get('auto_buy_loop', False):
+            if not manual and trade.get('auto_buy_loop', False):
                 previous_amount = trade.get("filled_amount_usdt", trade.get("amount_usdt", 0))
                 previous_profit_loss = trade.get("profit_loss", 0)
                 next_amount = previous_amount + previous_profit_loss
@@ -1793,7 +1793,7 @@ async def get_price_history(symbol: str = 'BTCUSDT', range: int = 1):
             Client.KLINE_INTERVAL_5MINUTE,
             f"{range} day ago UTC"
         )
-        times = [datetime.fromtimestamp(k[0] / 1000).isoformat() for k in klines]
+        times = [datetime.fromtimestamp(k[0] / 1000, tz=timezone.utc).isoformat().replace('+00:00', 'Z') for k in klines]
         opens = [float(k[1]) for k in klines]
         highs = [float(k[2]) for k in klines]
         lows = [float(k[3]) for k in klines]
@@ -1925,7 +1925,7 @@ async def get_chart_data(days: int = 1, symbol: str = 'BTCUSDT'):
             Client.KLINE_INTERVAL_5MINUTE,
             f"{days} day ago UTC"
         )
-        times = [datetime.fromtimestamp(k[0] / 1000).isoformat() for k in klines]
+        times = [datetime.fromtimestamp(k[0] / 1000, tz=timezone.utc).isoformat().replace('+00:00', 'Z') for k in klines]
         opens = [float(k[1]) for k in klines]
         highs = [float(k[2]) for k in klines]
         lows = [float(k[3]) for k in klines]
