@@ -193,6 +193,26 @@ const SYMBOL_MAPPING = {
     "chainlink": "LINKUSDT"
 };
 
+// Add display name and color mapping for coins
+const COIN_DISPLAY = {
+    'BTCUSDT': 'Bitcoin (BTC)',
+    'ETHUSDT': 'Ethereum (ETH)',
+    'BNBUSDT': 'Binance Coin (BNB)',
+    'XRPUSDT': 'Ripple (XRP)',
+    'DOGEUSDT': 'Dogecoin (DOGE)',
+    'MATICUSDT': 'Polygon (MATIC)',
+    'LINKUSDT': 'Chainlink (LINK)'
+};
+const COIN_COLOR = {
+    'BTCUSDT': '#26a69a',
+    'ETHUSDT': '#627eea',
+    'BNBUSDT': '#f3ba2f',
+    'XRPUSDT': '#23292f',
+    'DOGEUSDT': '#c2a633',
+    'MATICUSDT': '#8247e5',
+    'LINKUSDT': '#2a5ada'
+};
+
 // DOM Elements
 const connectionStatus = document.getElementById('connection-status');
 const activeTradesCount = document.getElementById('active-trades-count');
@@ -1233,15 +1253,16 @@ function testChart() {
 
 async function plotTradeChart() {
     console.log('plotTradeChart function called');
-    
-    // Always use BTC for the chart
-    const symbol = 'BTCUSDT';
-    const activeBtn = document.querySelector('.chart-range-btn.active');
+    // Use selected coin from dropdown, default to BTCUSDT
+    const chartCoinSelect = document.getElementById('chart-coin-select');
+    const symbol = chartCoinSelect ? chartCoinSelect.value : 'BTCUSDT';
+    const activeBtn = document.querySelector('.chart-range-btn.active[data-range]');
     const range = activeBtn ? activeBtn.getAttribute('data-range') : '1'; // Default to 1 day if not found
     console.log('Using symbol:', symbol, 'with range:', range);
 
-    // Color for BTC
-    const color = '#26a69a'; // BTC - Teal
+    // Set color and display name for the selected coin
+    const color = COIN_COLOR[symbol] || '#26a69a';
+    const displayName = COIN_DISPLAY[symbol] || 'Bitcoin (BTC)';
 
     // Fetch data
     const [activeTrades, tradeHistory] = await Promise.all([
@@ -1253,12 +1274,12 @@ async function plotTradeChart() {
     console.log('Fetched trade history:', tradeHistory.length);
 
     try {
-        // Fetch price data for BTC
+        // Fetch price data for selected coin
         const priceData = await fetchPriceHistory(symbol, range);
-        console.log('Price data for BTC:', priceData ? 'received' : 'failed');
+        console.log('Price data for', symbol, ':', priceData ? 'received' : 'failed');
         
         if (!priceData || !priceData.closes || priceData.closes.length === 0) {
-            console.warn('No price data available for BTC');
+            console.warn('No price data available for', symbol);
             return;
         }
 
@@ -1266,27 +1287,27 @@ async function plotTradeChart() {
         const times = priceData.times;
         const volumes = priceData.volumes || [];
         
-        console.log('BTC data points:', closes.length);
+        console.log(symbol, 'data points:', closes.length);
         
-        // Create price trace for BTC
+        // Create price trace for selected coin
         const priceTrace = {
             x: times,
             y: closes,
             mode: 'lines',
             line: { color: color, width: 2 },
-            name: 'Bitcoin (BTC)',
+            name: displayName,
             hovertemplate: 'Price: $%{y:.2f}<br>Time: %{x}<extra></extra>',
             connectgaps: true
         };
 
-        // Create volume trace for BTC
+        // Create volume trace for selected coin
         const volumeTrace = {
             x: times,
             y: volumes,
             type: 'bar',
             yaxis: 'y2',
-            marker: { color: 'rgba(38, 166, 154, 0.3)', opacity: 0.2 },
-            name: 'BTC Volume',
+            marker: { color: color, opacity: 0.2 },
+            name: displayName + ' Volume',
             opacity: 0.2,
             hovertemplate: 'Vol: %{y:.0f}<br>Time: %{x}<extra></extra>',
             showlegend: false
@@ -1318,8 +1339,14 @@ async function plotTradeChart() {
                 return;
             }
             trades.forEach(trade => {
-                // Only process trades for BTC
-                const tradeSymbol = SYMBOL_MAPPING[trade.coin?.toLowerCase()] || trade.coin;
+                // Only process trades for the selected coin symbol
+                // Compare trade.coin (e.g., 'bitcoin') mapped to symbol, or trade.coin if already a symbol
+                let tradeSymbol = trade.coin;
+                if (SYMBOL_MAPPING[trade.coin?.toLowerCase()]) {
+                    tradeSymbol = SYMBOL_MAPPING[trade.coin?.toLowerCase()];
+                } else if (/USDT$/.test(trade.coin)) {
+                    tradeSymbol = trade.coin;
+                }
                 if (tradeSymbol !== coinSymbol) return;
 
                 if (isHistory && trade.status === 'Closed') {
@@ -1493,3 +1520,15 @@ async function plotTradeChart() {
 }
 
 document.addEventListener('DOMContentLoaded', plotTradeChart); 
+
+// Restore coin select dropdown logic
+const chartCoinSelect = document.getElementById('chart-coin-select');
+if (chartCoinSelect) {
+    chartCoinSelect.addEventListener('change', function() {
+        // Set 1 Day as active
+        document.querySelectorAll('.chart-range-btn[data-range]').forEach(btn => btn.classList.remove('active'));
+        const oneDayBtn = document.querySelector('.chart-range-btn[data-range="1"]');
+        if (oneDayBtn) oneDayBtn.classList.add('active');
+        plotTradeChart();
+    });
+} 

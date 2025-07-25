@@ -1788,6 +1788,12 @@ def print_rsi_status(symbol: str, rsi: float, is_oversold: bool = False):
 async def get_price_history(symbol: str = 'BTCUSDT', range: int = 1):
     """Return OHLCV price history for the given symbol and range in days (1, 7, 30). Also returns orange points for high turn peaks where profit condition is not met."""
     try:
+        # Map symbol if it's a known coin name
+        mapped_symbol = SYMBOL_MAPPING.get(symbol.lower())
+        if mapped_symbol:
+            symbol = mapped_symbol
+        # Normalise symbol to upper case for Binance
+        symbol = symbol.upper()
         klines = binance_client.get_historical_klines(
             symbol,
             Client.KLINE_INTERVAL_5MINUTE,
