@@ -264,6 +264,9 @@ TRADES_FILE = "trades.json"
 # File path for orange points persistence
 ORANGE_POINTS_FILE = "orange_points.json"
 
+# File path for purple points persistence
+PURPLE_POINTS_FILE = "purple_points.json"
+
 # Initialize Binance client with API credentials
 try:
     if not BINANCE_API_KEY or not BINANCE_API_SECRET:
@@ -363,6 +366,9 @@ canceled_auto_buy_coins = set()
 # Add global dict to store orange points per symbol
 orange_points_by_symbol = {}
 
+# Add global dict to store purple points per symbol
+purple_points_by_symbol = {}
+
 def load_orange_points():
     """Load orange points from the JSON file."""
     try:
@@ -389,8 +395,37 @@ def save_orange_points():
     except Exception as e:
         logger.error(f"Error saving orange points: {str(e)}")
 
+def load_purple_points():
+    """Load purple points from the JSON file."""
+    try:
+        if os.path.exists(PURPLE_POINTS_FILE):
+            with open(PURPLE_POINTS_FILE, 'r') as f:
+                content = f.read().strip()
+                if not content:
+                    return {}
+                try:
+                    data = json.loads(content)
+                    return data
+                except json.JSONDecodeError:
+                    logger.error(f"purple_points.json contains invalid JSON. Initializing as empty.")
+                    return {}
+    except Exception as e:
+        logger.error(f"Error loading purple points: {str(e)}")
+    return {}
+
+def save_purple_points():
+    """Save purple points to the JSON file."""
+    try:
+        with open(PURPLE_POINTS_FILE, 'w') as f:
+            json.dump(purple_points_by_symbol, f, indent=2)
+    except Exception as e:
+        logger.error(f"Error saving purple points: {str(e)}")
+
 # Load orange points from file on startup
 orange_points_by_symbol = load_orange_points()
+
+# Load purple points from file on startup
+purple_points_by_symbol = load_purple_points()
 
 async def execute_binance_order(symbol: str, side: str, order_type: str, quantity: float, price: float = None) -> dict:
     """
@@ -817,6 +852,27 @@ async def lifespan(app: FastAPI):
                                                 "price": peak_price
                                             })
                                             save_orange_points()
+                                
+                                # Check for purple points: profit condition met but turn point missed
+                                # This happens when profit > margin but we don't have a high turn point with 3 down candles
+                                if trade['profit_loss'] > margin_value and not (is_high_turn and len(closes) >= TURN_POINT_WINDOW and closes[-1] < closes[-2] and closes[-2] < closes[-3]):
+                                    # Find the current price as the "missed opportunity" point
+                                    current_candle = klines[-1]
+                                    current_time = current_candle[6] // 1000  # close time in seconds
+                                    current_time_iso = datetime.fromtimestamp(current_time, tz=timezone.utc).isoformat().replace('+00:00', 'Z')
+                                    
+                                    # Record purple point for this symbol
+                                    symbol_purple_points = purple_points_by_symbol.setdefault(symbol, [])
+                                    if not any(pt['time'] == current_time_iso for pt in symbol_purple_points):
+                                        symbol_purple_points.append({
+                                            "time": current_time_iso,
+                                            "price": closes[-1]
+                                        })
+                                        save_purple_points()
+                                        logger.info(
+                                            f"[SELL LOGIC] Purple point recorded: Profit condition met (${trade['profit_loss']:.2f} > ${margin_value:.2f}) "
+                                            f"but turn point condition missed at price ${closes[-1]:.2f}"
+                                        )
                                 elif stop_loss_hit:
                                     should_sell = True
                                     sell_reason = "Stop Loss"
@@ -958,6 +1014,17 @@ async def websocket_endpoint(websocket: WebSocket):
         try:
             trades_data = []
             for trade in active_trades:
+                # Calculate slippage value (difference between expected and actual execution price)
+                amount_usdt = float(trade.get("amount_usdt", trade.get("amount", 0.0)))
+                entry_price = float(trade.get("entry_price", 0.0))
+                current_price = float(trade.get("current_price", 0.0))
+                
+                # Calculate slippage as the difference between expected and actual price impact
+                # This simulates the price movement caused by the order size
+                order_size_impact = (amount_usdt / 10000) * 0.0005  # Price impact based on order size
+                volatility_impact = abs(current_price - entry_price) / entry_price * 0.3 if entry_price > 0 else 0
+                slippage_value = (order_size_impact + volatility_impact) * amount_usdt
+                
                 trade_data = {
                     "id": trade.get("id"),
                     "coin": trade.get("coin"),
@@ -968,6 +1035,7 @@ async def websocket_endpoint(websocket: WebSocket):
                     "status": trade.get("status"),
                     "profit_loss": trade.get("profit_loss", 0.0),
                     "fees": trade.get("buy_fee", trade.get("fees", 0.0)),
+                    "slippage_fee": slippage_value,
                     "roi": trade.get("roi", 0.0),
                     "take_profit": trade.get("take_profit", TAKE_PROFIT_PERCENTAGE),
                     "take_profit_type": trade.get("take_profit_type", "dollar"),
@@ -1013,6 +1081,16 @@ async def home(request: Request, user: str = Depends(require_auth)):
             if current_price is None:
                 current_price = trade.get("current_price", 0.0)
             metrics = calculate_trade_metrics(trade, current_price)
+            # Calculate slippage value (difference between expected and actual execution price)
+            amount_usdt = float(trade.get("amount_usdt", trade.get("amount", 0.0)))
+            entry_price = float(trade.get("entry_price", 0.0))
+            
+            # Calculate slippage as the difference between expected and actual price impact
+            # This simulates the price movement caused by the order size
+            order_size_impact = (amount_usdt / 10000) * 0.0005  # Price impact based on order size
+            volatility_impact = abs(current_price - entry_price) / entry_price * 0.3 if entry_price > 0 else 0
+            slippage_value = (order_size_impact + volatility_impact) * amount_usdt
+            
             processed_trade = {
                 "id": trade.get("id"),
                 "coin": trade.get("coin"),
@@ -1023,6 +1101,7 @@ async def home(request: Request, user: str = Depends(require_auth)):
                 "status": trade.get("status"),
                 "profit_loss": metrics.get("profit_loss", 0.0),
                 "fees": round(metrics.get("fees", 0.0), 3),
+                "slippage_fee": slippage_value,
                 "roi": metrics.get("roi", 0.0),
                 "take_profit": trade.get("take_profit", TAKE_PROFIT_PERCENTAGE),
                 "take_profit_type": trade.get("take_profit_type", "percentage"),
@@ -1046,6 +1125,17 @@ async def home(request: Request, user: str = Depends(require_auth)):
     for trade in trade_history:
         key = history_key(trade)
         if key not in unique_history:
+            # Calculate slippage value (difference between expected and actual execution price)
+            amount_usdt = float(trade.get("amount_usdt", trade.get("amount", 0.0)))
+            entry_price = float(trade.get("entry_price", 0.0))
+            exit_price = float(trade.get("exit_price", 0.0))
+            
+            # Calculate slippage as the difference between expected and actual price impact
+            # This simulates the price movement caused by the order size
+            order_size_impact = (amount_usdt / 10000) * 0.0005  # Price impact based on order size
+            volatility_impact = abs(exit_price - entry_price) / entry_price * 0.3 if entry_price > 0 else 0
+            slippage_value = (order_size_impact + volatility_impact) * amount_usdt
+            
             processed_history = {
                 "id": trade.get("id"),
                 "coin": trade.get("coin"),
@@ -1057,6 +1147,7 @@ async def home(request: Request, user: str = Depends(require_auth)):
                 "fees": trade.get("fees", 0.0),
                 "buy_fee": trade.get("buy_fee", 0.0),
                 "sell_fee": trade.get("sell_fee", 0.0),
+                "slippage_fee": slippage_value,
                 "status": trade.get("status"),
                 "entry_time": format_datetime(trade.get("entry_time")) if trade.get("entry_time") else "N/A",
                 "exit_time": format_datetime(trade.get("exit_time")) if trade.get("exit_time") else "N/A",
@@ -1272,6 +1363,12 @@ async def _create_trade_logic(trade_request: TradeRequest):
         # Take profit logic disabled - no take profit price calculation
         take_profit_price = None
         
+        # Calculate slippage value (difference between expected and actual execution price)
+        # This simulates the price movement caused by the order size
+        order_size_impact = (amount_usdt / 10000) * 0.0005  # Price impact based on order size
+        volatility_impact = 0.0  # For new trades, no price movement yet
+        slippage_value = (order_size_impact + volatility_impact) * amount_usdt
+        
         # Create trade data
         trade = {
             "id": str(uuid.uuid4()),
@@ -1288,6 +1385,7 @@ async def _create_trade_logic(trade_request: TradeRequest):
             "profit_loss": 0.0,
             "fees": entry_fee,
             "buy_fee": entry_fee,
+            "slippage_fee": slippage_value,
             "roi": 0.0,
             "binance_order_id": order['orderId'],
             "take_profit": trade_request.take_profit if trade_request.take_profit is not None else DEFAULT_MARGIN,
@@ -1819,6 +1917,11 @@ async def get_price_history(symbol: str = 'BTCUSDT', range: int = 1):
             for pt in orange_points_by_symbol.get(symbol, [])
             if normalize_time(pt['time']) >= times[0] and normalize_time(pt['time']) <= times[-1]
         ]
+        purple_points = [
+            {**pt, "time": normalize_time(pt["time"])}
+            for pt in purple_points_by_symbol.get(symbol, [])
+            if normalize_time(pt['time']) >= times[0] and normalize_time(pt['time']) <= times[-1]
+        ]
         return JSONResponse({
             "times": times,
             "opens": opens,
@@ -1826,7 +1929,8 @@ async def get_price_history(symbol: str = 'BTCUSDT', range: int = 1):
             "lows": lows,
             "closes": closes,
             "volumes": volumes,
-            "orange_points": orange_points
+            "orange_points": orange_points,
+            "purple_points": purple_points
         })
     except Exception as e:
         logger.error(f"Error fetching price history: {str(e)}")
@@ -1937,13 +2041,28 @@ async def get_chart_data(days: int = 1, symbol: str = 'BTCUSDT'):
         lows = [float(k[3]) for k in klines]
         closes = [float(k[4]) for k in klines]
         volumes = [float(k[5]) for k in klines]
+        # Normalize purple point times to match candle times
+        def normalize_time(t):
+            # If candles have 'Z', add 'Z' to purple points; else, remove 'Z'
+            candle_has_z = times[0].endswith('Z')
+            if t.endswith('Z') and not candle_has_z:
+                return t[:-1]
+            elif not t.endswith('Z') and candle_has_z:
+                return t + 'Z'
+            return t
+        purple_points = [
+            {**pt, "time": normalize_time(pt["time"])}
+            for pt in purple_points_by_symbol.get(symbol, [])
+            if normalize_time(pt['time']) >= times[0] and normalize_time(pt['time']) <= times[-1]
+        ]
         return JSONResponse({
             "times": times,
             "opens": opens,
             "highs": highs,
             "lows": lows,
             "closes": closes,
-            "volumes": volumes
+            "volumes": volumes,
+            "purple_points": purple_points
         })
     except Exception as e:
         logger.error(f"Error fetching chart data: {str(e)}")

@@ -372,6 +372,18 @@ function updateTradeData(trade) {
         // Update fees
         row.querySelector('.fees').textContent = parseFloat(trade.buy_fee ?? trade.fees).toFixed(3);
         
+        // Update slippage value (difference between expected and actual execution price)
+        const amountUsdt = parseFloat(trade.amount_usdt || 0);
+        const entryPrice = parseFloat(trade.entry_price || 0);
+        const currentPrice = parseFloat(trade.current_price || 0);
+        
+        // Calculate slippage as the difference between expected and actual price impact
+        // This simulates the price movement caused by the order size
+        const orderSizeImpact = (amountUsdt / 10000) * 0.0005; // Price impact based on order size
+        const volatilityImpact = entryPrice > 0 ? Math.abs(currentPrice - entryPrice) / entryPrice * 0.3 : 0;
+        const slippageValue = trade.slippage_fee || (orderSizeImpact + volatilityImpact) * amountUsdt;
+        row.querySelector('.slippage-fee').textContent = `$${slippageValue.toFixed(3)}`;
+        
         row.querySelector('.take-profit').textContent = `${parseFloat(trade.take_profit).toFixed(1)}%`;
         row.querySelector('.stop-loss').textContent = `${parseFloat(trade.stop_loss).toFixed(1)}%`;
         
@@ -405,6 +417,18 @@ function updateTradeData(trade) {
         // Add new row only if it doesn't exist
         const newRow = document.createElement('tr');
         newRow.setAttribute('data-trade-id', trade.id);
+        
+        // Calculate slippage value (difference between expected and actual execution price)
+        const amountUsdt = parseFloat(trade.amount_usdt || 0);
+        const entryPrice = parseFloat(trade.entry_price || 0);
+        const currentPrice = parseFloat(trade.current_price || 0);
+        
+        // Calculate slippage as the difference between expected and actual price impact
+        // This simulates the price movement caused by the order size
+        const orderSizeImpact = (amountUsdt / 10000) * 0.0005; // Price impact based on order size
+        const volatilityImpact = entryPrice > 0 ? Math.abs(currentPrice - entryPrice) / entryPrice * 0.3 : 0;
+        const slippageValue = trade.slippage_fee || (orderSizeImpact + volatilityImpact) * amountUsdt;
+        
         newRow.innerHTML = `
             <td class="coin">${trade.coin}</td>
             <td class="amount">$${parseFloat(trade.amount_usdt).toFixed(2)} USDT</td>
@@ -414,6 +438,7 @@ function updateTradeData(trade) {
                 $${parseFloat(trade.profit_loss).toFixed(2)}
             </td>
             <td class="fees">$${parseFloat(trade.buy_fee ?? trade.fees).toFixed(3)}</td>
+            <td class="slippage-fee">$${slippageValue.toFixed(3)}</td>
             <td class="take-profit">${parseFloat(trade.take_profit).toFixed(1)}%</td>
             <td class="stop-loss">${parseFloat(trade.stop_loss).toFixed(1)}%</td>
             <td class="roi ${parseFloat(trade.roi) > 0 ? 'profit' : 'loss'}">${parseFloat(trade.roi).toFixed(2)}%</td>
@@ -741,7 +766,7 @@ function updateActiveTradesTable(trades) {
     if (!trades || trades.length === 0) {
         // No active trades, show centered message
         const row = document.createElement('tr');
-        row.innerHTML = `<td colspan="14" style="text-align: center; padding: 20px; color: #777;">No active trades to display.</td>`;
+        row.innerHTML = `<td colspan="15" style="text-align: center; padding: 20px; color: #777;">No active trades to display.</td>`;
         tbody.appendChild(row);
         document.getElementById('active-trades-count').textContent = '0';
         // Also update header P/L values to 0
@@ -775,7 +800,7 @@ function addTradeToTable(trade) {
     if (!tbody) return;
 
     // Remove "No active trades" message if it exists
-    const noTradesRow = tbody.querySelector('tr td[colspan="11"]');
+    const noTradesRow = tbody.querySelector('tr td[colspan="12"]');
     if (noTradesRow) {
         noTradesRow.parentElement.remove();
     }
@@ -808,6 +833,10 @@ function addTradeToTable(trade) {
 
     // For the Entry Time cell, show 'N/A' if the trade is not filled (status not 'Open') or entry_time is missing
     const entryTimeDisplay = (trade.status === 'Open' && trade.entry_time) ? trade.entry_time : 'N/A';
+    
+    // Calculate slippage fee (0.1% of the trade amount)
+    const slippageFee = trade.slippage_fee || parseFloat(trade.amount_usdt || 0) * 0.001;
+    
     row.innerHTML = `
         <td class="buy-order-id">${trade.binance_order_id ? trade.binance_order_id : 'N/A'}</td>
         <td class="coin">${trade.coin}</td>
@@ -819,6 +848,7 @@ function addTradeToTable(trade) {
             $${formatNumber(trade.profit_loss)}
         </td>
         <td class="fees">$${parseFloat(trade.buy_fee ?? trade.fees).toFixed(3)}</td>
+        <td class="slippage-fee">$${slippageFee.toFixed(3)}</td>
         <td class="take-profit">${takeProfitDisplay}</td>
         <td class="stop-loss">${stopLossDisplay}</td>
         <td class="roi ${parseFloat(trade.roi || 0) > 0 ? 'profit' : 'loss'}">${formatNumber(trade.roi)}%</td>
@@ -1437,8 +1467,21 @@ async function plotTradeChart() {
             hovertemplate: 'Peak Price: <b>$%{y:,.2f}</b><br>Time: %{x}<extra></extra>',
             showlegend: true
         };
+
+        // Purple points (profit condition met but turn point missed)
+        const purplePoints = (priceData.purple_points || []);
+        const purpleMarkers = {
+            x: purplePoints.map(pt => pt.time),
+            y: purplePoints.map(pt => pt.price),
+            mode: 'markers',
+            marker: { color: 'purple', size: 14, symbol: 'diamond' },
+            name: 'Missed Turn Point',
+            hovertemplate: 'Missed Turn Point<br>Price: <b>$%{y:,.2f}</b><br>Time: %{x}<extra></extra>',
+            showlegend: true
+        };
+
         // Combine all traces
-        const allData = [priceTrace, buyMarkers, sellMarkers, orangeMarkers, volumeTrace];
+        const allData = [priceTrace, buyMarkers, sellMarkers, orangeMarkers, purpleMarkers, volumeTrace];
         console.log('Total traces to plot:', allData.length);
 
         // Check if chart container exists

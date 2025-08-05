@@ -831,6 +831,7 @@
                             <th>Current Price</th>
                             <th>Profit/Loss</th>
                             <th>Buy Fee</th>
+                            <th>Slippage Value</th>
                             <th>Margin (TP)</th>
                             <th>Stop Loss</th>
                             <th>ROI</th>
@@ -861,6 +862,7 @@
                             <th>Fees</th>
                             <th>Buy Fee</th>
                             <th>Sell Fee</th>
+                            <th>Slippage Value</th>
                             <th>Status</th>
                             <th>Duration</th>
                             <th>Entry Time</th>
@@ -884,6 +886,7 @@
                                 <td>${{ "%.3f"|format(trade.fees) }}</td>
                                 <td>${{ "%.3f"|format(trade.buy_fee | default(0.0)) }}</td>
                                 <td>${{ "%.3f"|format(trade.sell_fee | default(0.0)) }}</td>
+                                <td>${{ "%.3f"|format(trade.slippage_fee | default(0.0)) }}</td>
                                 <td>{{ trade.status }}</td>
                                 <td>{{ trade.duration }}</td>
                                 <td>{{ trade.entry_time }}</td>
@@ -892,7 +895,7 @@
                             {% endfor %}
                         {% else %}
                         <tr>
-                            <td colspan="14" style="text-align: center; padding: 20px; color: #777;">No trade history to display.</td>
+                            <td colspan="15" style="text-align: center; padding: 20px; color: #777;">No trade history to display.</td>
                         </tr>
                         {% endif %}
                     </tbody>
